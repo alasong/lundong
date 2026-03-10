@@ -162,37 +162,87 @@ class PredictAgent(BaseAgent):
         }
 
     def _load_training_data(self) -> Dict[str, pd.DataFrame]:
-        """加载训练数据"""
+        """
+        加载训练数据（支持同花顺数据格式）
+        """
         data = {}
         raw_dir = settings.raw_data_dir
 
         if not os.path.exists(raw_dir):
             return data
 
-        # 合并所有历史概念数据
-        concept_files = [f for f in os.listdir(raw_dir) if f.startswith("concept_daily_")]
-        if concept_files:
-            dfs = [pd.read_csv(os.path.join(raw_dir, f)) for f in sorted(concept_files)]
-            data["concept"] = pd.concat(dfs, ignore_index=True)
-            logger.info(f"加载了 {len(concept_files)} 个文件，共 {len(data['concept'])} 条记录")
+        # 加载同花顺行业/概念数据 (ths_*_TI.csv 格式)
+        ths_files = [f for f in os.listdir(raw_dir) if f.endswith("_TI.csv")]
+
+        if ths_files:
+            dfs = []
+            for f in ths_files:
+                try:
+                    df = pd.read_csv(os.path.join(raw_dir, f))
+                    # 重命名字段以匹配系统期望的格式
+                    df = df.rename(columns={
+                        "pct_change": "pct_chg",
+                        "ts_code": "concept_code"
+                    })
+                    # 添加 name 字段
+                    if "name" not in df.columns:
+                        df["name"] = df["concept_code"]
+                    dfs.append(df)
+                except Exception as e:
+                    logger.warning(f"加载文件 {f} 失败：{e}")
+
+            if dfs:
+                data["concept"] = pd.concat(dfs, ignore_index=True)
+                logger.info(f"加载了 {len(ths_files)} 个同花顺数据文件用于训练，共 {len(data['concept'])} 条记录")
 
         return data
 
-    def _load_latest_data(self) -> Dict[str, pd.DataFrame]:
-        """加载最新数据"""
+    def _load_latest_data(self, recent_days: int = 30) -> Dict[str, pd.DataFrame]:
+        """
+        加载最新数据（支持同花顺数据格式）
+
+        Args:
+            recent_days: 加载最近 N 天的数据
+        """
         data = {}
         raw_dir = settings.raw_data_dir
 
         if not os.path.exists(raw_dir):
             return data
 
-        # 概念板块数据 - 最近 30 天
-        concept_files = sorted([f for f in os.listdir(raw_dir) if f.startswith("concept_daily_")])
-        if concept_files:
-            recent_files = concept_files[-30:]
-            dfs = [pd.read_csv(os.path.join(raw_dir, f)) for f in recent_files]
-            data["concept"] = pd.concat(dfs, ignore_index=True)
-            logger.info(f"加载了最近 {len(recent_files)} 天的数据")
+        # 加载同花顺行业/概念数据 (ths_*_TI.csv 格式)
+        ths_files = [f for f in os.listdir(raw_dir) if f.endswith("_TI.csv")]
+
+        if ths_files:
+            dfs = []
+            for f in ths_files:
+                try:
+                    df = pd.read_csv(os.path.join(raw_dir, f))
+                    # 重命名字段以匹配系统期望的格式
+                    df = df.rename(columns={
+                        "pct_change": "pct_chg",
+                        "ts_code": "concept_code"
+                    })
+                    # 添加 name 字段
+                    if "name" not in df.columns:
+                        df["name"] = df["concept_code"]
+                    dfs.append(df)
+                except Exception as e:
+                    logger.warning(f"加载文件 {f} 失败：{e}")
+
+            if dfs:
+                data["concept"] = pd.concat(dfs, ignore_index=True)
+                # 按日期排序，只保留最近的数据
+                if "trade_date" in data["concept"].columns:
+                    data["concept"] = data["concept"].sort_values("trade_date")
+                    latest_date = data["concept"]["trade_date"].max()
+                    try:
+                        latest_date_int = int(latest_date)
+                        min_date = latest_date_int - 10000  # 大约 30 个交易日
+                        data["concept"] = data["concept"][data["concept"]["trade_date"] >= min_date]
+                    except:
+                        pass
+                logger.info(f"加载了 {len(ths_files)} 个同花顺数据文件用于预测，共 {len(data['concept'])} 条记录")
 
         return data
 

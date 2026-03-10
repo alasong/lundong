@@ -76,6 +76,12 @@ class AnalysisAgent(BaseAgent):
             historical_data=data.get("concept_history")
         )
 
+        # 添加排名字段
+        if not scores.empty and "hotspot_score" in scores.columns:
+            scores["rank"] = scores.groupby("trade_date")["hotspot_score"].rank(
+                ascending=False, method="min"
+            )
+
         # 识别热点
         hotspots = self.hotspot_detector.identify_hotspots(
             scores_df=scores,
@@ -84,7 +90,7 @@ class AnalysisAgent(BaseAgent):
         )
 
         # 检测新出现的热点
-        emergence = self.hotspot_detector.detect_hotspot_emergence(scores)
+        emergence = self.hotspot_detector.detect_hotspot_emergence(scores) if not scores.empty else pd.DataFrame()
 
         return {
             "hotspot_scores": scores.to_dict("records"),
@@ -171,9 +177,10 @@ class AnalysisAgent(BaseAgent):
             return {"error": "无热点评分数据"}
 
         # 学习轮动规则
+        rotation_paths_df = rotation_paths if rotation_paths is not None and not rotation_paths.empty else pd.DataFrame()
         rules = self.pattern_learner.learn_rotation_rules(
             hotspot_scores=hotspot_scores,
-            rotation_paths=rotation_paths or pd.DataFrame()
+            rotation_paths=rotation_paths_df
         )
 
         # 学习市场环境规则
@@ -221,35 +228,54 @@ class AnalysisAgent(BaseAgent):
 
         return results
 
-    def _load_latest_data(self) -> Dict[str, pd.DataFrame]:
-        """加载最新数据"""
-        data = {}
+    def _load_latest_data(self, recent_days: int = 30) -> Dict[str, pd.DataFrame]:
+        """
+        加载最新数据（支持同花顺数据格式）
 
-        # 查找最新的数据文件
+        Args:
+            recent_days: 加载最近 N 天的数据
+        """
+        data = {}
         raw_dir = settings.raw_data_dir
 
-        # 概念板块数据
-        concept_files = sorted([f for f in os.listdir(raw_dir) if f.startswith("concept_daily_")])
-        if concept_files:
-            latest_concept = concept_files[-1]
-            data["concept"] = pd.read_csv(os.path.join(raw_dir, latest_concept))
+        if not os.path.exists(raw_dir):
+            return data
 
-        # 资金流向数据
-        moneyflow_files = sorted([f for f in os.listdir(raw_dir) if f.startswith("moneyflow_")])
-        if moneyflow_files:
-            latest_moneyflow = moneyflow_files[-1]
-            data["moneyflow"] = pd.read_csv(os.path.join(raw_dir, latest_moneyflow))
+        # 加载同花顺行业/概念数据 (ths_*_TI.csv 格式)
+        ths_files = [f for f in os.listdir(raw_dir) if f.endswith("_TI.csv")]
 
-        # 涨跌停数据
-        limit_up_files = sorted([f for f in os.listdir(raw_dir) if f.startswith("limit_up_")])
-        limit_down_files = sorted([f for f in os.listdir(raw_dir) if f.startswith("limit_down_")])
+        if ths_files:
+            # 合并所有同花顺数据文件
+            dfs = []
+            for f in ths_files:
+                try:
+                    df = pd.read_csv(os.path.join(raw_dir, f))
+                    # 重命名字段以匹配系统期望的格式
+                    df = df.rename(columns={
+                        "pct_change": "pct_chg",
+                        "ts_code": "concept_code"
+                    })
+                    # 添加 concept_name 字段（从文件名提取或使用代码）
+                    if "name" not in df.columns:
+                        df["name"] = df["concept_code"]
+                    dfs.append(df)
+                except Exception as e:
+                    logger.warning(f"加载文件 {f} 失败：{e}")
 
-        if limit_up_files and limit_down_files:
-            limit_up = pd.read_csv(os.path.join(raw_dir, limit_up_files[-1]))
-            limit_down = pd.read_csv(os.path.join(raw_dir, limit_down_files[-1]))
-            limit_up["limit_type"] = "U"
-            limit_down["limit_type"] = "D"
-            data["limit"] = pd.concat([limit_up, limit_down], ignore_index=True)
+            if dfs:
+                data["concept"] = pd.concat(dfs, ignore_index=True)
+                # 按日期排序，只保留最近的数据
+                if "trade_date" in data["concept"].columns:
+                    data["concept"] = data["concept"].sort_values("trade_date")
+                    latest_date = data["concept"]["trade_date"].max()
+                    # 转换为整数进行比较
+                    try:
+                        latest_date_int = int(latest_date)
+                        min_date = latest_date_int - 10000  # 大约 30 个交易日
+                        data["concept"] = data["concept"][data["concept"]["trade_date"] >= min_date]
+                    except:
+                        pass
+                logger.info(f"加载了 {len(ths_files)} 个同花顺数据文件，共 {len(data['concept'])} 条记录")
 
         return data
 

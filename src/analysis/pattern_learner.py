@@ -101,18 +101,24 @@ class PatternLearner:
         """学习持续时间规律"""
         patterns = {}
 
+        # 检查数据是否为空
+        if rotation_paths is None or rotation_paths.empty:
+            return {"by_concept": {}, "distribution": {}}
+
         # 按概念统计平均持续时间
-        concept_duration = rotation_paths.groupby("concept_code")["duration"].agg(["mean", "std", "max", "min"])
+        if "concept_code" in rotation_paths.columns and "duration" in rotation_paths.columns:
+            concept_duration = rotation_paths.groupby("concept_code")["duration"].agg(["mean", "std", "max", "min"])
+            patterns["by_concept"] = concept_duration.to_dict("index")
 
-        patterns["by_concept"] = concept_duration.to_dict("index")
-
-        # 整体持续时间分布
-        patterns["distribution"] = {
-            "avg": rotation_paths["duration"].mean(),
-            "std": rotation_paths["duration"].std(),
-            "median": rotation_paths["duration"].median(),
-            "quartiles": rotation_paths["duration"].quantile([0.25, 0.5, 0.75]).to_dict()
-        }
+            # 整体持续时间分布
+            patterns["distribution"] = {
+                "avg": rotation_paths["duration"].mean(),
+                "std": rotation_paths["duration"].std(),
+                "median": rotation_paths["duration"].median(),
+                "quartiles": rotation_paths["duration"].quantile([0.25, 0.5, 0.75]).to_dict()
+            }
+        else:
+            return {"by_concept": {}, "distribution": {}}
 
         return patterns
 

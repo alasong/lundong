@@ -26,75 +26,119 @@ class UnifiedPredictor:
     def prepare_features(
         self,
         concept_data: pd.DataFrame,
-        lookback: int = 10
+        lookback: int = 10,
+        use_parallel: bool = True
     ) -> pd.DataFrame:
         """
-        准备预测特征
+        准备预测特征（优化版，使用向量化操作）
 
         Args:
             concept_data: 概念板块行情
             lookback: 回溯天数
+            use_parallel: 是否使用并行处理
         """
-        features = []
+        # 数据预处理：重命名字段，确保数据类型正确
+        df = concept_data.copy()
+        if "pct_chg" in df.columns:
+            df["pct_chg"] = pd.to_numeric(df["pct_chg"], errors="coerce").fillna(0)
+        if "vol" in df.columns:
+            df["vol"] = pd.to_numeric(df["vol"], errors="coerce").fillna(0)
 
-        for concept_code in concept_data["concept_code"].unique():
-            concept_df = concept_data[concept_data["concept_code"] == concept_code].sort_values("trade_date")
+        # 按 concept_code 分组处理
+        all_features = []
 
-            if len(concept_df) < lookback + 20:
-                continue
+        # 按 concept_code 分组
+        grouped = df.groupby("concept_code")
 
-            for i in range(lookback, len(concept_df) - 20):
-                window = concept_df.iloc[i - lookback:i + 1]
+        if use_parallel:
+            from joblib import Parallel, delayed
+            results = Parallel(n_jobs=-1, backend="loky")(
+                delayed(self._process_single_concept)(name, group, lookback)
+                for name, group in grouped
+            )
+            all_features = [r for r in results if r is not None]
+        else:
+            for concept_code, concept_df in grouped:
+                result = self._process_single_concept(concept_code, concept_df, lookback)
+                if result is not None:
+                    all_features.append(result)
 
-                feature_row = {
-                    "concept_code": concept_code,
-                    "trade_date": concept_df.iloc[i]["trade_date"],
-                }
+        if not all_features:
+            return pd.DataFrame()
 
-                # 涨跌幅序列特征
-                for j in range(lookback):
-                    feature_row[f"pct_chg_{j}"] = window.iloc[j]["pct_chg"]
+        return pd.concat(all_features, ignore_index=True)
 
-                # 滚动统计特征
-                for period in [3, 5, 10]:
-                    tail = window["pct_chg"].tail(period)
-                    feature_row[f"pct_mean_{period}"] = tail.mean()
-                    feature_row[f"pct_std_{period}"] = tail.std() if len(tail) > 1 else 0
-                    feature_row[f"pct_max_{period}"] = tail.max()
-                    feature_row[f"pct_min_{period}"] = tail.min()
+    def _process_single_concept(
+        self,
+        concept_code: str,
+        concept_df: pd.DataFrame,
+        lookback: int = 10
+    ) -> Optional[pd.DataFrame]:
+        """处理单个 concept 的特征"""
+        concept_df = concept_df.sort_values("trade_date").reset_index(drop=True)
 
-                # 动量特征
-                feature_row["momentum_3"] = window.iloc[-1]["pct_chg"] - window.iloc[-3]["pct_chg"]
-                feature_row["momentum_5"] = window.iloc[-1]["pct_chg"] - window.iloc[-5]["pct_chg"]
-                feature_row["momentum_10"] = window.iloc[-1]["pct_chg"] - window.iloc[0]["pct_chg"]
+        if len(concept_df) < lookback + 20:
+            return None
 
-                # 趋势特征
-                feature_row["trend"] = (window["pct_chg"] > 0).sum() / lookback
-                feature_row["连续上涨天数"] = self._count_continuous_up(window["pct_chg"])
+        # 使用向量化操作计算特征
+        n = len(concept_df)
+        features_list = []
 
-                # 成交量特征（如果有）
-                if "vol" in concept_df.columns:
-                    feature_row["vol_mean_5"] = window["vol"].tail(5).mean()
-                    feature_row["vol_ratio"] = window["vol"].iloc[-1] / window["vol"].tail(5).mean()
+        pct_chg = concept_df["pct_chg"].values
+        vol = concept_df["vol"].values if "vol" in concept_df.columns else None
 
-                # 目标：1 日、5 日、20 日涨幅
-                if i + 20 < len(concept_df):
-                    feature_row["target_1d"] = concept_df.iloc[i + 1]["pct_chg"]
-                    feature_row["target_5d"] = concept_df.iloc[i + 1:i + 6]["pct_chg"].sum()
-                    feature_row["target_20d"] = concept_df.iloc[i + 1:i + 21]["pct_chg"].sum()
-                else:
-                    feature_row["target_1d"] = None
-                    feature_row["target_5d"] = None
-                    feature_row["target_20d"] = None
+        for i in range(lookback, n - 20):
+            window = pct_chg[i-lookback:i+1]
 
-                features.append(feature_row)
+            feature_row = {
+                "concept_code": concept_code,
+                "trade_date": concept_df.iloc[i]["trade_date"],
+            }
 
-        return pd.DataFrame(features)
+            # 涨跌幅序列特征（向量化）
+            for j in range(lookback):
+                feature_row[f"pct_chg_{j}"] = window[j]
 
-    def _count_continuous_up(self, pct_series: pd.Series) -> int:
-        """计算连续上涨天数"""
+            # 滚动统计特征（向量化）
+            for period in [3, 5, 10]:
+                tail = window[-period:]
+                feature_row[f"pct_mean_{period}"] = np.mean(tail)
+                feature_row[f"pct_std_{period}"] = np.std(tail) if len(tail) > 1 else 0
+                feature_row[f"pct_max_{period}"] = np.max(tail)
+                feature_row[f"pct_min_{period}"] = np.min(tail)
+
+            # 动量特征
+            feature_row["momentum_3"] = window[-1] - window[-3]
+            feature_row["momentum_5"] = window[-1] - window[-5]
+            feature_row["momentum_10"] = window[-1] - window[0]
+
+            # 趋势特征
+            feature_row["trend"] = np.sum(window > 0) / lookback
+            feature_row["连续上涨天数"] = self._count_continuous_up_fast(window)
+
+            # 成交量特征
+            if vol is not None:
+                vol_window = vol[i-lookback:i+1]
+                feature_row["vol_mean_5"] = np.mean(vol_window[-5:])
+                vol_mean_5 = np.mean(vol_window[-5:])
+                feature_row["vol_ratio"] = vol_window[-1] / vol_mean_5 if vol_mean_5 > 0 else 1.0
+
+            # 目标值
+            feature_row["target_1d"] = pct_chg[i + 1]
+            feature_row["target_5d"] = np.sum(pct_chg[i + 1:i + 6])
+            feature_row["target_20d"] = np.sum(pct_chg[i + 1:i + 21])
+
+            features_list.append(feature_row)
+
+        if not features_list:
+            return None
+
+        return pd.DataFrame(features_list)
+
+    def _count_continuous_up_fast(self, pct_array: np.ndarray) -> int:
+        """快速计算连续上涨天数"""
         count = 0
-        for val in reversed(pct_series.values):
+        for val in reversed(pct_array):
             if val > 0:
                 count += 1
             else:

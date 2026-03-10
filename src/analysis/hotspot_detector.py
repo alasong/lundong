@@ -32,7 +32,7 @@ class HotspotDetector:
         计算热点强度综合评分
 
         Args:
-            concept_data: 概念板块行情数据
+            concept_data: 概念板块行情数据（同花顺格式：concept_code, trade_date, pct_chg, name）
             moneyflow_data: 资金流向数据
             limit_data: 涨跌停数据
             historical_data: 历史数据（用于计算持续性）
@@ -47,7 +47,7 @@ class HotspotDetector:
             for _, row in day_data.iterrows():
                 scores = {
                     "trade_date": trade_date,
-                    "concept_code": row.get("ts_code", ""),
+                    "concept_code": row.get("concept_code", ""),
                     "concept_name": row.get("name", ""),
                 }
 
@@ -136,10 +136,10 @@ class HotspotDetector:
         if historical_data is None or historical_data.empty:
             return 50.0
 
-        concept_code = row.get("ts_code", "")
+        concept_code = row.get("concept_code", "")
 
         # 获取该概念的历史数据
-        concept_history = historical_data[historical_data["ts_code"] == concept_code]
+        concept_history = historical_data[historical_data["concept_code"] == concept_code]
 
         if len(concept_history) < 2:
             return 50.0

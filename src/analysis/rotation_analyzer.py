@@ -23,8 +23,7 @@ class RotationAnalyzer:
     def compute_correlation_matrix(
         self,
         price_data: pd.DataFrame,
-        window: int = 20,
-        method: str = "pearson"
+        window: int = 20
     ) -> pd.DataFrame:
         """
         计算板块相关性矩阵
@@ -32,8 +31,10 @@ class RotationAnalyzer:
         Args:
             price_data: 板块价格数据，需包含 trade_date, concept_code, pct_chg
             window: 滚动窗口
-            method: 相关性计算方法 pearson/spearman
         """
+        # 去重：保留每个 trade_date + concept_code 组合的第一条记录
+        price_data = price_data.drop_duplicates(subset=["trade_date", "concept_code"], keep="first")
+
         # 转换为宽格式
         pivot = price_data.pivot(
             index="trade_date",
@@ -43,11 +44,15 @@ class RotationAnalyzer:
 
         # 计算滚动相关性
         if window:
-            corr_matrix = pivot.rolling(window=window).corr(method=method).iloc[-window:]
-            # 取最近一期的相关性
-            corr_matrix = corr_matrix.groupby(level=0).last().iloc[-1].unstack()
+            rolling_corr = pivot.rolling(window=window).corr()
+            # 取最近一天的相关性
+            if len(rolling_corr) > 0:
+                latest_date = rolling_corr.index[-1][0]
+                corr_matrix = rolling_corr.xs(latest_date, level=0)
+            else:
+                corr_matrix = pd.DataFrame(index=pivot.columns, columns=pivot.columns)
         else:
-            corr_matrix = pivot.corr(method=method)
+            corr_matrix = pivot.corr()
 
         return corr_matrix
 
@@ -63,6 +68,9 @@ class RotationAnalyzer:
             price_data: 板块价格数据
             max_lag: 最大滞后期数
         """
+        # 去重：保留每个 trade_date + concept_code 组合的第一条记录
+        price_data = price_data.drop_duplicates(subset=["trade_date", "concept_code"], keep="first")
+
         pivot = price_data.pivot(
             index="trade_date",
             columns="concept_code",
