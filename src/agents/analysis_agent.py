@@ -230,7 +230,8 @@ class AnalysisAgent(BaseAgent):
 
     def _load_latest_data(self, recent_days: int = 30) -> Dict[str, pd.DataFrame]:
         """
-        加载最新数据（支持同花顺数据格式）
+        加载最新数据（支持同花顺数据格式）- 优化版
+        使用并行读取加速
 
         Args:
             recent_days: 加载最近 N 天的数据
@@ -245,22 +246,35 @@ class AnalysisAgent(BaseAgent):
         ths_files = [f for f in os.listdir(raw_dir) if f.endswith("_TI.csv")]
 
         if ths_files:
-            # 合并所有同花顺数据文件
-            dfs = []
-            for f in ths_files:
+            from joblib import Parallel, delayed
+
+            def load_single_file(filepath):
                 try:
-                    df = pd.read_csv(os.path.join(raw_dir, f))
-                    # 重命名字段以匹配系统期望的格式
-                    df = df.rename(columns={
-                        "pct_change": "pct_chg",
-                        "ts_code": "concept_code"
+                    df = pd.read_csv(filepath, dtype={
+                        'concept_code': str,
+                        'trade_date': str,
+                        'pct_chg': float,
+                        'vol': float,
+                        'close': float
                     })
-                    # 添加 concept_name 字段（从文件名提取或使用代码）
-                    if "name" not in df.columns:
-                        df["name"] = df["concept_code"]
-                    dfs.append(df)
+                    # 重命名字段
+                    if 'pct_change' in df.columns:
+                        df = df.rename(columns={'pct_change': 'pct_chg'})
+                    if 'ts_code' in df.columns:
+                        df = df.rename(columns={'ts_code': 'concept_code'})
+                    if 'name' not in df.columns:
+                        df['name'] = df['concept_code']
+                    return df
                 except Exception as e:
-                    logger.warning(f"加载文件 {f} 失败：{e}")
+                    logger.warning(f"加载文件 {filepath} 失败：{e}")
+                    return None
+
+            # 并行加载所有文件
+            dfs = Parallel(n_jobs=-1, backend="threading")(
+                delayed(load_single_file)(os.path.join(raw_dir, f))
+                for f in ths_files
+            )
+            dfs = [df for df in dfs if df is not None]
 
             if dfs:
                 data["concept"] = pd.concat(dfs, ignore_index=True)

@@ -177,22 +177,81 @@ def main():
 
 
 def print_report(report: Dict):
-    """打印简单报告"""
-    print("\n" + "=" * 60)
-    print(f"日期：{report.get('date')}")
-    print(f"生成时间：{report.get('generated_at')}")
-    print("=" * 60)
+    """打印预测报告 - 优化版"""
+    print("\n" + "=" * 70)
+    print("A 股热点轮动预测系统 - 预测报告")
+    print("=" * 70)
+    print(f"日期：{report.get('date', 'N/A')}")
+    print(f"生成时间：{report.get('generated_at', 'N/A')}")
+    print("=" * 70)
 
-    print("\n【热点板块 TOP5】")
-    for i, hs in enumerate(report.get("hotspots", [])[:5], 1):
-        print(f"{i}. {hs.get('concept_name', 'N/A')} - 评分：{hs.get('total_score', 0):.1f}")
+    # 打印热点板块
+    hotspots = report.get("hotspots", [])
+    if hotspots:
+        print("\n【热点板块 TOP10】")
+        print("-" * 70)
+        print(f"{'排名':<6}{'板块名称':<20}{'评分':<10}{'状态'}")
+        print("-" * 70)
+        for i, hs in enumerate(hotspots[:10], 1):
+            name = hs.get('concept_name', hs.get('name', 'N/A'))
+            score = hs.get('total_score', hs.get('hotspot_score', 0))
+            # 判断状态
+            if i <= 3:
+                status = "🔥 热门"
+            elif i <= 6:
+                status = "📈 走强"
+            else:
+                status = "📊 关注"
+            print(f"{i:<6}{name:<20}{score:<10.1f}{status}")
+        print("-" * 70)
 
-    print("\n【预测 TOP5】")
-    for i, pred in enumerate(report.get("predictions", [])[:5], 1):
-        print(f"{i}. {pred.get('concept_code', 'N/A')} - 综合得分：{pred.get('combined_score', 0):.2f}")
+    # 打印预测结果
+    predictions = report.get("predictions", [])
+    if predictions:
+        print("\n【热点轮动预测 TOP10】")
+        print("-" * 70)
+        print(f"{'排名':<6}{'板块名称':<20}{'综合得分':<10}{'1 日':<8}{'5 日':<8}{'20 日':<8}")
+        print("-" * 70)
+        for i, pred in enumerate(predictions[:10], 1):
+            name = pred.get('concept_name', pred.get('name', 'N/A'))
+            # 如果名称为空，使用 code
+            if not name or name == 'N/A':
+                name = pred.get('concept_code', 'N/A')
+            combined = pred.get('combined_score', 0)
+            p1d = pred.get('pred_1d', 0)
+            p5d = pred.get('pred_5d', 0)
+            p20d = pred.get('pred_20d', 0)
 
-    print(f"\n【总结】{report.get('summary')}")
-    print("=" * 60 + "\n")
+            # 根据综合得分标记
+            if i <= 3:
+                marker = "⭐"
+            elif i <= 6:
+                marker = "📈"
+            else:
+                marker = "📊"
+
+            print(f"{i:<6}{name:<20}{combined:<10.2f}{p1d:<8.2f}{p5d:<8.2f}{p20d:<8.2f} {marker}")
+        print("-" * 70)
+
+    # 轮动建议
+    print("\n【轮动策略建议】")
+    print("-" * 70)
+    if predictions:
+        top3 = predictions[:3]
+        print(f"重点关注：{', '.join([p.get('concept_name', p.get('concept_code', 'N/A')) for p in top3])}")
+
+        # 判断市场趋势
+        avg_score = sum(p.get('combined_score', 0) for p in top3) / 3 if top3 else 0
+        if avg_score > 5:
+            print("市场判断：多头行情，建议积极介入热点板块")
+        elif avg_score > 0:
+            print("市场判断：震荡行情，建议逢低布局轮动板块")
+        else:
+            print("市场判断：空头行情，建议控制仓位，等待机会")
+    else:
+        print("暂无预测数据，请先运行模型训练")
+
+    print("=" * 70 + "\n")
 
 
 if __name__ == "__main__":

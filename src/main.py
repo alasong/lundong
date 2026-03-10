@@ -29,9 +29,9 @@ def main():
     parser = argparse.ArgumentParser(description="A 股热点轮动预测系统")
     parser.add_argument(
         "--mode",
-        choices=["daily", "quick", "train", "data", "history"],
+        choices=["daily", "quick", "train", "predict", "data", "history"],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), data(采集), history(历史)"
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史)"
     )
     parser.add_argument(
         "--date",
@@ -93,6 +93,12 @@ def main():
             logger.info("训练模型")
             result = runner.predict_agent.execute(task="train", horizon="all")
             print(f"训练结果：{result}")
+
+        elif args.mode == "predict":
+            # 仅预测（使用已有模型）
+            logger.info("执行预测（使用已有模型）")
+            result = runner.predict_agent.execute(task="predict", horizon="all")
+            print(f"预测结果：{result}")
 
         elif args.mode == "data":
             # 数据采集

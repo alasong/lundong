@@ -27,7 +27,8 @@ class UnifiedPredictor:
         self,
         concept_data: pd.DataFrame,
         lookback: int = 10,
-        use_parallel: bool = True
+        use_parallel: bool = True,
+        n_jobs: int = 32
     ) -> pd.DataFrame:
         """
         准备预测特征（优化版，使用向量化操作）
@@ -36,6 +37,7 @@ class UnifiedPredictor:
             concept_data: 概念板块行情
             lookback: 回溯天数
             use_parallel: 是否使用并行处理
+            n_jobs: 并行任务数，默认 32
         """
         # 数据预处理：重命名字段，确保数据类型正确
         df = concept_data.copy()
@@ -52,7 +54,8 @@ class UnifiedPredictor:
 
         if use_parallel:
             from joblib import Parallel, delayed
-            results = Parallel(n_jobs=-1, backend="loky")(
+            # 使用 threading 后端减少进程启动开销
+            results = Parallel(n_jobs=n_jobs, backend="threading", verbose=0)(
                 delayed(self._process_single_concept)(name, group, lookback)
                 for name, group in grouped
             )
@@ -86,6 +89,7 @@ class UnifiedPredictor:
 
         pct_chg = concept_df["pct_chg"].values
         vol = concept_df["vol"].values if "vol" in concept_df.columns else None
+        name = concept_df["name"].iloc[0] if "name" in concept_df.columns else ""
 
         for i in range(lookback, n - 20):
             window = pct_chg[i-lookback:i+1]
@@ -93,6 +97,7 @@ class UnifiedPredictor:
             feature_row = {
                 "concept_code": concept_code,
                 "trade_date": concept_df.iloc[i]["trade_date"],
+                "name": name,
             }
 
             # 涨跌幅序列特征（向量化）
@@ -161,7 +166,8 @@ class UnifiedPredictor:
 
         # 准备训练数据
         train_data = features.dropna(subset=["target_1d", "target_5d", "target_20d"])
-        feature_cols = [c for c in train_data.columns if c not in ["concept_code", "trade_date", "target_1d", "target_5d", "target_20d"]]
+        # 排除非数值特征列
+        feature_cols = [c for c in train_data.columns if c not in ["concept_code", "trade_date", "target_1d", "target_5d", "target_20d", "name"]]
 
         X = train_data[feature_cols].values
         y_1d = train_data["target_1d"].values
@@ -275,7 +281,10 @@ class UnifiedPredictor:
         X = features[feature_cols].values
 
         # 预测
-        predictions = features[["concept_code", "trade_date"]].copy()
+        pred_cols = ["concept_code", "trade_date"]
+        if "name" in features.columns:
+            pred_cols.append("name")
+        predictions = features[pred_cols].copy()
         predictions["pred_1d"] = models["1d"].predict(X)
         predictions["pred_5d"] = models["5d"].predict(X)
         predictions["pred_20d"] = models["20d"].predict(X)
