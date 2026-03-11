@@ -291,13 +291,38 @@ class PredictAgent(BaseAgent):
 
     def _load_latest_data(self, recent_days: int = 60) -> Dict[str, pd.DataFrame]:
         """
-        加载最新数据（支持同花顺数据格式）- 优化版
-        使用并行读取加速，并添加板块名称
+        加载最新数据（优先从数据库加载）- 优化版
 
         Args:
             recent_days: 加载最近 N 天的数据（默认 60 天，确保有足够数据用于特征计算）
         """
         data = {}
+
+        # 优先从数据库加载
+        try:
+            from data.database import SQLiteDatabase
+            db = SQLiteDatabase()
+
+            df = db.get_all_concept_data()
+
+            if not df.empty:
+                # 重命名字段以匹配系统期望的格式
+                if 'pct_change' in df.columns:
+                    df = df.rename(columns={'pct_change': 'pct_chg'})
+                if 'ts_code' in df.columns:
+                    df = df.rename(columns={'ts_code': 'concept_code'})
+
+                # 添加 name 字段
+                if 'name' not in df.columns:
+                    df['name'] = df['concept_code']
+
+                data["concept"] = df
+                logger.info(f"从数据库加载数据：{len(df):,} 条记录")
+                return data
+        except Exception as e:
+            logger.warning(f"从数据库加载数据失败：{e}")
+
+        # 回退到文件读取
         raw_dir = settings.raw_data_dir
 
         if not os.path.exists(raw_dir):

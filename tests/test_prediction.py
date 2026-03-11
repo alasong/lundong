@@ -223,11 +223,25 @@ class TestPredictAgent:
         test_file = raw_dir / "ths_881101_TI.csv"
         sample_concept_data.to_csv(test_file, index=False)
 
-        agent = PredictAgent()
-        result = agent.run(task="predict", horizon="all")
+        # Mock 数据库加载，强制使用 CSV 文件
+        def mock_load_latest_data(self, recent_days=60):
+            import pandas as pd
+            data = {}
+            # 从 CSV 文件加载测试数据
+            df = sample_concept_data.copy()
+            if 'ts_code' in df.columns:
+                df = df.rename(columns={'ts_code': 'concept_code'})
+            df['name'] = df['concept_code']
+            data["concept"] = df
+            return data
 
-        assert result is not None
-        assert isinstance(result, dict)
+        from unittest.mock import patch
+        with patch.object(PredictAgent, '_load_latest_data', mock_load_latest_data):
+            agent = PredictAgent()
+            result = agent.run(task="predict", horizon="all")
+
+            assert result is not None
+            assert isinstance(result, dict)
 
     def test_agent_simple_prediction(self, sample_concept_data, temp_data_dir, monkeypatch):
         """测试简化预测（基于近期动量）"""
