@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.base_agent import BaseAgent
 from models.predictor import UnifiedPredictor
 from config import settings
+from data.name_mapper import load_name_mapping, get_block_name
 
 
 class PredictAgent(BaseAgent):
@@ -245,7 +246,7 @@ class PredictAgent(BaseAgent):
     def _load_latest_data(self, recent_days: int = 60) -> Dict[str, pd.DataFrame]:
         """
         加载最新数据（支持同花顺数据格式）- 优化版
-        使用并行读取加速
+        使用并行读取加速，并添加板块名称
 
         Args:
             recent_days: 加载最近 N 天的数据（默认 60 天，确保有足够数据用于特征计算）
@@ -255,6 +256,9 @@ class PredictAgent(BaseAgent):
 
         if not os.path.exists(raw_dir):
             return data
+
+        # 加载名称映射
+        name_mapping = load_name_mapping()
 
         # 加载同花顺行业/概念数据 (ths_*_TI.csv 格式)
         ths_files = [f for f in os.listdir(raw_dir) if f.endswith("_TI.csv")]
@@ -277,20 +281,11 @@ class PredictAgent(BaseAgent):
                     if 'ts_code' in df.columns:
                         df = df.rename(columns={'ts_code': 'concept_code'})
 
-                    # 处理 name 字段 - 从文件名提取或使用 code
-                    filename = os.path.basename(filepath)
-                    if 'name' not in df.columns:
-                        # 尝试从文件名提取：ths_881101_TI.csv -> 881101
-                        if filename.startswith('ths_') and '_TI.csv' in filename:
-                            code_part = filename.replace('ths_', '').replace('_TI.csv', '')
-                            df['name'] = f"板块_{code_part}"
-                        else:
-                            df['name'] = df['concept_code']
-                    elif df['name'].iloc[0] == df['concept_code'].iloc[0]:
-                        # 如果 name 等于 code，尝试从文件名获取更好的名称
-                        if filename.startswith('ths_') and '_TI.csv' in filename:
-                            code_part = filename.replace('ths_', '').replace('_TI.csv', '')
-                            df['name'] = f"板块_{code_part}"
+                    # 使用名称映射获取真实名称
+                    first_code = df['concept_code'].iloc[0]
+                    block_name = get_block_name(first_code, name_mapping)
+                    df['name'] = block_name
+                    df['concept_name'] = block_name
 
                     return df
                 except Exception as e:

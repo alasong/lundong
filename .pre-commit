@@ -13,10 +13,10 @@ import re
 import os
 
 
-def run_command(cmd: list) -> tuple:
+def run_command(cmd: list, timeout: int = 120) -> tuple:
     """运行命令并返回结果"""
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return result.returncode, result.stdout, result.stderr
     except Exception as e:
         return 1, "", str(e)

@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import settings, ensure_directories
 from runner import SimpleRunner, print_report
+from data.name_mapper import load_name_mapping, get_block_name
 
 
 def setup_logging():
@@ -22,6 +23,72 @@ def setup_logging():
         level=settings.log_level,
         format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
     )
+
+
+def _get_block_info(name: str, code: str) -> dict:
+    """
+    获取板块信息（名称和说明）
+
+    Args:
+        name: 板块名称
+        code: 板块代码
+
+    Returns:
+        {'name': 板块名称，'desc': 板块说明/类型}
+    """
+    # 如果名称已经是中文（不是"板块_xxx"格式），直接使用
+    if name and not name.startswith("板块_"):
+        # 根据代码判断板块类型
+        block_type = _get_block_type(code)
+        return {'name': name, 'desc': block_type}
+
+    # 使用名称映射获取真实名称
+    mapping = load_name_mapping()
+    real_name = get_block_name(code, mapping)
+
+    # 如果还是板块_xxx 格式，说明没有映射
+    if real_name.startswith("板块_"):
+        return {'name': real_name, 'desc': ''}
+
+    block_type = _get_block_type(code)
+    return {'name': real_name, 'desc': block_type}
+
+
+def _get_block_type(code: str) -> str:
+    """
+    根据代码判断板块类型
+
+    同花顺代码规则:
+    - 881xxx: 行业板块
+    - 882xxx: 地区板块
+    - 885xxx: 概念板块
+    - 700xxx: 风格指数
+
+    Args:
+        code: 板块代码 (如 885311.TI)
+
+    Returns:
+        板块类型说明
+    """
+    if not code:
+        return ''
+
+    # 提取数字部分
+    code_num = code.replace('.TI', '').replace('.', '')
+    try:
+        prefix = code_num[:3]
+        if prefix == '881':
+            return '行业'
+        elif prefix == '882':
+            return '地区'
+        elif prefix == '885':
+            return '概念'
+        elif prefix == '700':
+            return '风格'
+        else:
+            return ''
+    except:
+        return ''
 
 
 def main():
@@ -116,14 +183,19 @@ def main():
 
                 if top_predictions:
                     print("\n【预测 TOP10】")
-                    print("-" * 70)
-                    print(f"{'排名':<6}{'板块名称':<20}{'综合得分':<12}{'1 日':<10}{'5 日':<10}{'20 日':<10}")
-                    print("-" * 70)
+                    print("-" * 100)
+                    print(f"{'排名':<6}{'板块名称':<25}{'板块说明':<15}{'综合得分':<12}{'1 日':<8}{'5 日':<8}{'20 日':<8}")
+                    print("-" * 100)
                     for i, pred in enumerate(top_predictions, 1):
+                        # 获取板块名称
                         name = pred.get('concept_name', pred.get('name', pred.get('concept_code', 'N/A')))
-                        # 如果名称等于 code，说明没有正确加载名称
-                        if name == pred.get('concept_code'):
-                            name = f"{name} (名称未知)"
+                        code = pred.get('concept_code', '')
+
+                        # 提取板块说明（从名称中分离行业/概念属性）
+                        block_info = _get_block_info(name, code)
+                        block_name = block_info['name']
+                        block_desc = block_info['desc']
+
                         combined = pred.get('combined_score', 0)
                         p1d = pred.get('pred_1d', 0)
                         p5d = pred.get('pred_5d', 0)
@@ -137,8 +209,8 @@ def main():
                         else:
                             marker = "📊"
 
-                        print(f"{i:<6}{name:<20}{combined:<12.2f}{p1d:<10.2f}{p5d:<10.2f}{p20d:<10.2f} {marker}")
-                    print("-" * 70)
+                        print(f"{i:<6}{block_name:<25}{block_desc:<15}{combined:<12.2f}{p1d:<8.2f}{p5d:<8.2f}{p20d:<8.2f} {marker}")
+                    print("-" * 100)
 
                     # 策略建议
                     print("\n【轮动策略】")
