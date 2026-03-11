@@ -41,9 +41,10 @@ class PredictAgent(BaseAgent):
 
         Args:
             task: 任务类型 predict/train
-            horizon: 预测周期 all/1d/5d/20d
+            horizon: 预测周期 all/1d/5d/20d（预留，当前默认使用 all）
             data: 输入数据
         """
+        # horizon 参数预留用于未来单周期预测
         if task == "train":
             return self._train_models(data, **kwargs)
         elif task == "predict":
@@ -321,7 +322,8 @@ class PredictAgent(BaseAgent):
                         # 计算起始日期（考虑 recent_days 个交易日）
                         min_date = latest_date_int - (recent_days * 100)  # 大约 recent_days 个交易日
                         data["concept"] = data["concept"][data["concept"]["trade_date"] >= min_date]
-                    except:
+                    except (ValueError, TypeError):
+                        # 日期转换失败时保留所有数据
                         pass
                 logger.info(f"加载了 {len(ths_files)} 个同花顺数据文件用于预测，共 {len(data['concept'])} 条记录")
 

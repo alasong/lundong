@@ -18,6 +18,9 @@ from config import settings, ensure_directories
 class UnifiedPredictor:
     """高性能统一预测器"""
 
+    # 综合评分权重配置
+    HORIZON_WEIGHTS = {"1d": 0.3, "5d": 0.5, "20d": 0.2}
+
     def __init__(self):
         ensure_directories()
         self.models_dir = os.path.join(settings.data_dir, "models")
@@ -335,17 +338,15 @@ class UnifiedPredictor:
         y_5d = train_data["target_5d"].values
         y_20d = train_data["target_20d"].values
 
-        # 划分训练集和测试集
+        # 划分训练集和测试集（一次性划分，复用索引）
         from sklearn.model_selection import train_test_split
-        X_train, X_test, y1_train, y1_test = train_test_split(
-            X, y_1d, test_size=0.2, shuffle=False
+        train_idx, test_idx = train_test_split(
+            range(len(X)), test_size=0.2, shuffle=False
         )
-        _, _, y5_train, y5_test = train_test_split(
-            X, y_5d, test_size=0.2, shuffle=False
-        )
-        _, _, y20_train, y20_test = train_test_split(
-            X, y_20d, test_size=0.2, shuffle=False
-        )
+        X_train, X_test = X[train_idx], X[test_idx]
+        y1_train, y1_test = y_1d[train_idx], y_1d[test_idx]
+        y5_train, y5_test = y_5d[train_idx], y_5d[test_idx]
+        y20_train, y20_test = y_20d[train_idx], y_20d[test_idx]
 
         # 训练三个模型
         models = {}
@@ -579,11 +580,12 @@ class UnifiedPredictor:
         predictions["pred_5d"] = pred_5d
         predictions["pred_20d"] = pred_20d
 
-        # 综合评分（加权）
+        # 综合评分（加权）- 使用配置权重
+        weights = self.HORIZON_WEIGHTS
         predictions["combined_score"] = (
-            predictions["pred_1d"] * 0.3 +
-            predictions["pred_5d"] * 0.5 +
-            predictions["pred_20d"] * 0.2
+            predictions["pred_1d"] * weights["1d"] +
+            predictions["pred_5d"] * weights["5d"] +
+            predictions["pred_20d"] * weights["20d"]
         )
 
         # 计算预测置信度
@@ -596,15 +598,18 @@ class UnifiedPredictor:
             r2_20d = model_metrics.get("horizon_20d", {}).get("r2", 0.5)
 
             # 基础置信度（模型整体性能）
-            base_confidence = (r2_1d * 0.3 + r2_5d * 0.5 + r2_20d * 0.2)
+            base_confidence = (
+                r2_1d * weights["1d"] +
+                r2_5d * weights["5d"] +
+                r2_20d * weights["20d"]
+            )
 
-            # 方法 2：基于预测值的离散程度（使用多模型或分位数）
-            # 这里使用预测值在历史分布中的位置来估计不确定性
+            # 方法 2：基于预测值的离散程度
             pred_1d_std = np.std(pred_1d) if len(pred_1d) > 1 else 1.0
             pred_5d_std = np.std(pred_5d) if len(pred_5d) > 1 else 1.0
             pred_20d_std = np.std(pred_20d) if len(pred_20d) > 1 else 1.0
 
-            # 方法 3：基于特征空间的密度（简化的马氏距离）
+            # 方法 3：基于特征空间的密度（简化的欧氏距离）
             # 计算每个样本到特征中心的距离
             X_mean = np.mean(X, axis=0)
             X_std = np.std(X, axis=0) + 1e-8
@@ -612,25 +617,25 @@ class UnifiedPredictor:
             distances = np.sqrt(np.sum(X_normalized ** 2, axis=1))
 
             # 将距离转换为置信度（距离越远，置信度越低）
-            # 使用指数衰减函数
+            # 使用指数衰减函数，缩放因子基于特征维度
             distance_confidence = np.exp(-distances / (2 * np.sqrt(X.shape[1])))
 
             # 综合置信度 = 基础置信度 * 距离置信度
-            # 对于每个预测周期，分别计算置信度
             predictions["confidence_1d"] = base_confidence * 0.5 + (r2_1d * 0.5) * distance_confidence
             predictions["confidence_5d"] = base_confidence * 0.5 + (r2_5d * 0.5) * distance_confidence
             predictions["confidence_20d"] = base_confidence * 0.5 + (r2_20d * 0.5) * distance_confidence
 
             # 综合置信度
             predictions["confidence"] = (
-                predictions["confidence_1d"] * 0.3 +
-                predictions["confidence_5d"] * 0.5 +
-                predictions["confidence_20d"] * 0.2
+                predictions["confidence_1d"] * weights["1d"] +
+                predictions["confidence_5d"] * weights["5d"] +
+                predictions["confidence_20d"] * weights["20d"]
             )
 
             # 置信度等级（高/中/低）
             conf_percentiles = np.percentile(predictions["confidence"], [33, 67])
-            def get_conf_level(conf):
+
+            def get_conf_level(conf: float) -> str:
                 if conf >= conf_percentiles[1]:
                     return "高"
                 elif conf >= conf_percentiles[0]:

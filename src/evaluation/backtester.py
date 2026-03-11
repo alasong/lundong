@@ -20,6 +20,9 @@ from models.predictor import UnifiedPredictor
 class Backtester:
     """回测引擎"""
 
+    # 每月平均交易日数
+    TRADING_DAYS_PER_MONTH = 21
+
     def __init__(self, initial_capital: float = 1000000.0):
         """
         初始化回测器
@@ -54,8 +57,9 @@ class Backtester:
         # 按日期分组
         dates = sorted(concept_data['trade_date'].unique())
 
-        # 计算切分点
-        total_months = len(dates) // 20  # 假设每月 20 个交易日
+        # 计算切分点（使用实际交易日计算）
+        trading_days_per_month = self.TRADING_DAYS_PER_MONTH
+        total_months = len(dates) // trading_days_per_month
         if total_months < train_windows + test_windows:
             logger.warning("数据量不足，无法进行回测")
             return {"error": "数据量不足"}
@@ -65,8 +69,8 @@ class Backtester:
 
         # 滚动回测
         for i in range(0, total_months - train_windows - test_windows, step):
-            train_end_idx = (i + train_windows) * 20
-            test_end_idx = (i + train_windows + test_windows) * 20
+            train_end_idx = (i + train_windows) * trading_days_per_month
+            test_end_idx = (i + train_windows + test_windows) * trading_days_per_month
 
             # 划分训练集和测试集
             train_data = concept_data[concept_data['trade_date'] < dates[train_end_idx]].copy()
@@ -212,10 +216,13 @@ class Backtester:
 
         Args:
             concept_data: 概念板块数据
-            weight_grid: 权重组合列表，默认测试 9 种组合
+            weight_grid: 权重组合列表，默认测试 9 种组合 (1d, 5d, 20d)
 
         Returns:
             最优权重和回测结果
+
+        Note:
+            当前版本未实际使用传入权重，需要在 predictor.predict() 中添加权重参数支持
         """
         if weight_grid is None:
             # 生成权重组合 (1d, 5d, 20d)
@@ -235,8 +242,8 @@ class Backtester:
 
         results = []
         for w1, w5, w20 in weight_grid:
-            # 临时修改权重（需要在 predict 方法中支持）
-            # 这里简化处理，直接使用当前权重
+            # TODO: 实现动态权重传递到 predict 方法
+            # 当前版本使用固定权重 (0.3, 0.5, 0.2)
             result = self.run_walk_forward(concept_data, train_windows=12, test_windows=3, step=3)
 
             if 'avg_metrics' in result:
@@ -318,7 +325,7 @@ class Backtester:
             train_end_date = dates[max(0, test_start_idx - embargo_days)]
 
             # 训练窗口起始点
-            train_days = train_window_months * 20  # 约算
+            train_days = train_window_months * trading_days_per_month
             train_start_idx = max(0, test_start_idx - train_days)
             train_start_date = dates[train_start_idx] if train_start_idx < len(dates) else dates[0]
 
