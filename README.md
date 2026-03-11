@@ -76,6 +76,9 @@ data/
 ### 数据采集
 
 ```bash
+# 查看已采集的数据
+python src/main.py --mode list
+
 # 采集基础数据（板块列表 + 近期行情）
 python src/main.py --mode data
 
@@ -133,6 +136,7 @@ CV_SPLITS=5 CV_TRAIN_MONTHS=24 CV_PURGE=5 CV_EMBARGO=2 \
 
 | 模式 | 说明 | 命令 | 依赖 |
 |------|------|------|------|
+| `list` | **查看已采集的数据** | `--mode list` | 无 |
 | `data` | 采集基础数据 | `--mode data` | TUSHARE_TOKEN |
 | `history` | 采集历史数据 | `--mode history --start-date X --end-date Y` | TUSHARE_TOKEN |
 | `train` | 训练模型 | `--mode train` | 历史数据 |
