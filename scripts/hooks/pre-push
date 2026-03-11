@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Git Pre-push Hook
+推送前运行完整测试套件
+"""
+import subprocess
+import sys
+import os
+
+
+def get_project_root() -> str:
+    """获取项目根目录"""
+    hook_dir = os.path.dirname(os.path.abspath(__file__))  # .git/hooks
+    return os.path.dirname(os.path.dirname(hook_dir))
+
+
+def run_command(cmd: list, timeout: int = 300) -> tuple:
+    """运行命令并返回结果"""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=get_project_root())
+        return result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired:
+        return -1, "", f"Timeout after {timeout}s"
+    except Exception as e:
+        return 1, "", str(e)
+
+
+def main():
+    """主函数"""
+    print("=" * 60)
+    print("Git Pre-push 测试")
+    print("=" * 60)
+
+    # 检查 pytest 是否存在
+    venv_pytest = os.path.join(get_project_root(), '.venv', 'bin', 'pytest')
+
+    if os.path.exists(venv_pytest):
+        cmd = [venv_pytest, "tests/", "-v", "--tb=short", "--timeout=60"]
+        print(f"使用虚拟环境 pytest")
+    else:
+        cmd = ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "--timeout=60"]
+        print("使用系统 pytest")
+
+    print(f"运行完整测试套件...")
+    print("-" * 60)
+
+    code, stdout, stderr = run_command(cmd, timeout=300)
+
+    # 输出结果
+    print(stdout)
+    if stderr:
+        print(stderr)
+
+    print("-" * 60)
+    if code == 0:
+        print("✓ 所有测试通过，允许推送")
+        sys.exit(0)
+    else:
+        print("❌ 测试失败，推送被阻止")
+        print("\n提示：可以使用 --no-verify 跳过测试推送（不推荐）")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
