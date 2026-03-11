@@ -97,9 +97,9 @@ def main():
     parser = argparse.ArgumentParser(description="A 股热点轮动预测系统")
     parser.add_argument(
         "--mode",
-        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list", "dedup"],
+        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize"],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重)"
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理)"
     )
     parser.add_argument(
         "--date",
@@ -428,6 +428,34 @@ def main():
             print("-" * 70)
             print(f"完成：处理 {files_processed} 个文件，共移除 {total_removed} 条重复记录")
             print("=" * 70 + "\n")
+
+        elif args.mode == "fast":
+            # 高速并发采集
+            logger.info("执行高速并发采集")
+            from data.fast_collector import HighSpeedDataCollector
+
+            if not settings.tushare_token:
+                logger.error("请设置 TUSHARE_TOKEN")
+                return
+
+            start_date = args.start_date or "20200101"
+            end_date = args.end_date or datetime.now().strftime("%Y%m%d")
+
+            collector = HighSpeedDataCollector(
+                token=settings.tushare_token,
+                max_workers=10
+            )
+
+            # 下载所有概念板块历史数据
+            collector.download_all_history(start_date, end_date)
+
+        elif args.mode == "organize":
+            # 数据整理
+            logger.info("执行数据整理")
+            from data.data_organizer import DataOrganizer
+
+            organizer = DataOrganizer()
+            organizer.organize_directory()
 
         elif args.mode == "backtest":
             # 回测验证
