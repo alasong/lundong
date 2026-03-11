@@ -241,6 +241,7 @@ class UnifiedPredictor:
         # 训练三个模型
         models = {}
         metrics = {}
+        feature_importances = {}
 
         for horizon_name, y_train, y_test in [
             ("1d", y1_train, y1_test),
@@ -260,21 +261,58 @@ class UnifiedPredictor:
 
             models[horizon_name] = model
             metrics[f"horizon_{horizon_name}"] = model_metrics
+
+            # 提取特征重要性
+            if hasattr(model, 'feature_importances_'):
+                importance = dict(zip(feature_cols, model.feature_importances_.tolist()))
+                # 按重要性排序
+                sorted_importance = sorted(importance.items(), key=lambda x: x[1], reverse=True)
+                feature_importances[f"horizon_{horizon_name}"] = sorted_importance
+
+                # 输出 TOP10 重要特征
+                logger.info(f"{horizon_name}日模型 TOP10 特征:")
+                for feat, imp in sorted_importance[:10]:
+                    logger.info(f"  {feat}: {imp:.4f}")
+
             logger.info(f"{horizon_name}日模型：MSE={model_metrics['mse']:.4f}, R2={model_metrics['r2']:.4f}")
 
-        # 保存模型
+        # 保存模型（包含特征重要性）
         model_path = os.path.join(self.models_dir, "unified_model.pkl")
         with open(model_path, "wb") as f:
-            pickle.dump({"models": models, "feature_cols": feature_cols}, f)
+            pickle.dump({
+                "models": models,
+                "feature_cols": feature_cols,
+                "feature_importances": feature_importances
+            }, f)
 
         elapsed = time.time() - start_time
         logger.info(f"模型训练完成，耗时 {elapsed:.2f}s，已保存：{model_path}")
 
+        # 保存特征重要性到 JSON 文件
+        self._save_feature_importance(feature_importances, feature_cols)
+
         return {
             "models": models,
             "metrics": metrics,
-            "feature_cols": feature_cols
+            "feature_cols": feature_cols,
+            "feature_importances": feature_importances
         }
+
+    def _save_feature_importance(self, feature_importances: dict, feature_cols: list):
+        """保存特征重要性到 JSON 文件"""
+        import json
+
+        # 转换为可序列化格式
+        serializable = {}
+        for key, importance_list in feature_importances.items():
+            serializable[key] = [{"feature": feat, "importance": float(imp)}
+                                 for feat, imp in importance_list]
+
+        # 保存
+        output_path = os.path.join(self.models_dir, "feature_importance.json")
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(serializable, f, ensure_ascii=False, indent=2)
+        logger.info(f"特征重要性已保存：{output_path}")
 
     def _create_model(self, model_type: str, n_jobs: int = -1):
         """创建模型实例"""
@@ -323,6 +361,40 @@ class UnifiedPredictor:
             with open(model_path, "rb") as f:
                 return pickle.load(f)
         return None
+
+    def get_feature_importance(self) -> Optional[Dict]:
+        """获取特征重要性（从已保存的文件）"""
+        import json
+        importance_path = os.path.join(self.models_dir, "feature_importance.json")
+        if os.path.exists(importance_path):
+            with open(importance_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return None
+
+    def print_feature_importance(self, top_n: int = 20):
+        """打印特征重要性 TOP N"""
+        importance = self.get_feature_importance()
+        if importance is None:
+            logger.warning("未找到特征重要性数据")
+            return
+
+        print("\n" + "=" * 70)
+        print("特征重要性分析")
+        print("=" * 70)
+
+        for horizon_key in ["horizon_1d", "horizon_5d", "horizon_20d"]:
+            if horizon_key in importance:
+                print(f"\n【{horizon_key.replace('horizon_', '').upper()} 预测】")
+                print("-" * 70)
+                print(f"{'排名':<6}{'特征名':<35}{'重要性':<15}")
+                print("-" * 70)
+                for i, item in enumerate(importance[horizon_key][:top_n], 1):
+                    feat = item["feature"]
+                    imp = item["importance"]
+                    print(f"{i:<6}{feat:<35}{imp:<15.4f}")
+                print()
+
+        print("=" * 70)
 
     def predict(
         self,

@@ -96,9 +96,9 @@ def main():
     parser = argparse.ArgumentParser(description="A 股热点轮动预测系统")
     parser.add_argument(
         "--mode",
-        choices=["daily", "quick", "train", "predict", "data", "history"],
+        choices=["daily", "quick", "train", "predict", "data", "history", "importance"],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史)"
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性)"
     )
     parser.add_argument(
         "--date",
@@ -259,6 +259,13 @@ def main():
                 end_date=args.end_date
             )
             print(f"历史数据采集结果：{result}")
+
+        elif args.mode == "importance":
+            # 显示特征重要性
+            logger.info("加载特征重要性分析")
+            from models.predictor import UnifiedPredictor
+            predictor = UnifiedPredictor()
+            predictor.print_feature_importance(top_n=20)
 
     except Exception as e:
         logger.error(f"执行失败：{e}")
