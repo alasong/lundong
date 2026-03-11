@@ -36,7 +36,7 @@ logs/
 data/raw/*.csv
 data/processed/
 data/features/
-data/models/
+# data/models/
 data/results/
 data/finetune*/
 
