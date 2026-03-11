@@ -100,8 +100,8 @@ class PredictAgent(BaseAgent):
             # 返回简化预测（使用近期表现）
             return self._simple_prediction(concept_data)
 
-        # 预测
-        predictions = self.predictor.predict(self.model_result, features)
+        # 预测（带置信度评估）
+        predictions = self.predictor.predict(self.model_result, features, with_confidence=True)
 
         if predictions.empty:
             return {"success": False, "error": "预测失败"}
@@ -152,7 +152,7 @@ class PredictAgent(BaseAgent):
         }
 
     def _format_predictions(self, predictions: pd.DataFrame) -> Dict:
-        """格式化预测结果 - 优化可读性"""
+        """格式化预测结果 - 优化可读性（支持置信度）"""
         # 按综合评分排序
         ranked = predictions.nlargest(50, "combined_score")
 
@@ -168,13 +168,24 @@ class PredictAgent(BaseAgent):
                 "pred_5d": round(row.get("pred_5d", 0), 2),
                 "pred_20d": round(row.get("pred_20d", 0), 2),
             }
+            # 添加置信度信息（如果存在）
+            if "confidence" in row:
+                pred["confidence"] = round(row.get("confidence", 0), 3)
+            if "confidence_level" in row:
+                pred["confidence_level"] = row.get("confidence_level", "")
             top_predictions.append(pred)
+
+        # 检查是否有高置信度的预测
+        if "confidence_level" in ranked.columns:
+            high_conf_count = (ranked["confidence_level"] == "高").sum()
+            logger.info(f"高置信度预测数量：{high_conf_count}")
 
         return {
             "predictions": ranked.to_dict("records"),
             "top_10": top_predictions[:10],
             "top_20": top_predictions,
-            "model_used": True
+            "model_used": True,
+            "confidence_available": "confidence" in ranked.columns
         }
 
     def _load_training_data(self) -> Dict[str, pd.DataFrame]:

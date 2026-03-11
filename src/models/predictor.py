@@ -157,7 +157,59 @@ class UnifiedPredictor:
             for i in range(valid_samples)
         ])
 
-        # 成交量特征
+        # ===== 扩展特征工程 =====
+
+        # 1. 波动率特征
+        for period in [3, 5, 10, 20]:
+            window_data = np.lib.stride_tricks.sliding_window_view(
+                pct_chg, window_shape=period
+            )[:valid_samples]
+            # 波动率（标准差/均值）
+            features[f"volatility_{period}"] = np.std(window_data, axis=1) / (np.mean(np.abs(window_data), axis=1) + 1e-8)
+            # 偏度（衡量分布不对称性）
+            features[f"skewness_{period}"] = np.mean(((window_data - np.mean(window_data, axis=1, keepdims=True)) /
+                                                       (np.std(window_data, axis=1, keepdims=True) + 1e-8)) ** 3, axis=1)
+            # 峰度（衡量分布尾部厚度）
+            features[f"kurtosis_{period}"] = np.mean(((window_data - np.mean(window_data, axis=1, keepdims=True)) /
+                                                       (np.std(window_data, axis=1, keepdims=True) + 1e-8)) ** 4, axis=1) - 3
+
+        # 2. 价格位置特征
+        for period in [5, 10, 20]:
+            window_data = np.lib.stride_tricks.sliding_window_view(
+                pct_chg, window_shape=period
+            )[:valid_samples]
+            # 当前值在窗口中的百分位
+            current_vals = pct_chg[lookback - 1:lookback - 1 + valid_samples]
+            features[f"pct_rank_{period}"] = np.array([
+                np.sum(window_data[i] <= current_vals[i]) / period
+                for i in range(valid_samples)
+            ])
+            # 突破近期高点
+            features[f"breakout_{period}"] = (current_vals >= np.max(window_data, axis=1)).astype(float)
+
+        # 3. MACD 类特征
+        ema_12 = pd.Series(pct_chg).ewm(span=12, adjust=False).mean().values
+        ema_26 = pd.Series(pct_chg).ewm(span=26, adjust=False).mean().values
+        macd_line = ema_12 - ema_26
+        signal_line = pd.Series(macd_line).ewm(span=9, adjust=False).mean().values
+        macd_hist = macd_line - signal_line
+
+        # 确保数组长度匹配
+        features["macd"] = macd_line[lookback - 1:lookback - 1 + valid_samples]
+        features["macd_signal"] = signal_line[lookback - 1:lookback - 1 + valid_samples]
+        features["macd_hist"] = macd_hist[lookback - 1:lookback - 1 + valid_samples]
+
+        # 4. RSI 类特征
+        for period in [6, 12]:
+            gains = np.maximum(pct_chg, 0)
+            losses = np.maximum(-pct_chg, 0)
+            avg_gain = pd.Series(gains).ewm(span=period, adjust=False).mean().values
+            avg_loss = pd.Series(losses).ewm(span=period, adjust=False).mean().values
+            rs = avg_gain / (avg_loss + 1e-8)
+            rsi = 100 - (100 / (1 + rs))
+            features[f"rsi_{period}"] = rsi[lookback - 1:lookback - 1 + valid_samples]
+
+        # 5. 成交量特征扩展
         if vol is not None:
             vol_window = np.lib.stride_tricks.sliding_window_view(
                 vol, window_shape=lookback
@@ -172,19 +224,76 @@ class UnifiedPredictor:
                 vol[lookback - 1:lookback - 1 + valid_samples] / vol_mean_5,
                 1.0
             )
+            # 成交量趋势
+            features["vol_trend"] = np.sum(vol_tail > np.mean(vol_tail, axis=1, keepdims=True), axis=1) / 5
+            # 成交量波动率
+            features["vol_volatility"] = np.std(vol_tail, axis=1) / (vol_mean_5 + 1e-8)
 
-        # 目标值（向量化）
-        features["target_1d"] = pct_chg[lookback + 1:lookback + 1 + valid_samples]
+        # 6. 量价关系特征
+        if vol is not None:
+            # 量价相关性
+            for period in [5, 10]:
+                vol_window_local = np.lib.stride_tricks.sliding_window_view(
+                    vol, window_shape=period
+                )[:valid_samples]
+                pct_window_local = np.lib.stride_tricks.sliding_window_view(
+                    pct_chg, window_shape=period
+                )[:valid_samples]
+
+                # 计算相关系数
+                def corr_coeff(v, p):
+                    if np.std(v) < 1e-8 or np.std(p) < 1e-8:
+                        return 0
+                    return np.corrcoef(v, p)[0, 1]
+
+                features[f"vol_price_corr_{period}"] = np.array([
+                    corr_coeff(vol_window_local[i], pct_window_local[i])
+                    for i in range(valid_samples)
+                ])
+
+        # 7. 缺口特征（大幅跳空）
+        pct_diff = np.diff(pct_chg, prepend=pct_chg[0])
+        features["gap_up"] = (pct_diff[lookback - 1:lookback - 1 + valid_samples] > 2).astype(float)
+        features["gap_down"] = (pct_diff[lookback - 1:lookback - 1 + valid_samples] < -2).astype(float)
+
+        # 8. 极端涨跌幅特征
+        features["extreme_up"] = (pct_chg[lookback - 1:lookback - 1 + valid_samples] > 5).astype(float)
+        features["extreme_down"] = (pct_chg[lookback - 1:lookback - 1 + valid_samples] < -5).astype(float)
+
+        # 9. 动量加速/减速
+        features["momentum_accel"] = pct_chg[lookback - 1:lookback - 1 + valid_samples] - 2 * pct_chg[lookback - 2:lookback - 2 + valid_samples] + pct_chg[lookback - 3:lookback - 3 + valid_samples]
+
+        # 10. 均值回归信号
+        for period in [5, 10]:
+            window_data = np.lib.stride_tricks.sliding_window_view(
+                pct_chg, window_shape=period
+            )[:valid_samples]
+            mean_vals = np.mean(window_data, axis=1)
+            std_vals = np.std(window_data, axis=1)
+            current_vals = pct_chg[lookback - 1:lookback - 1 + valid_samples]
+            # Z-Score
+            features[f"zscore_{period}"] = (current_vals - mean_vals) / (std_vals + 1e-8)
+            # 均值回归信号（Z-Score < -1 表示超卖）
+            features[f"mean_revert_{period}"] = (features[f"zscore_{period}"] < -1).astype(float)
+
+        # 确保所有特征数组长度一致
+        min_length = min(len(v) for v in features.values() if isinstance(v, np.ndarray))
+        for key in features:
+            if isinstance(features[key], np.ndarray) and len(features[key]) > min_length:
+                features[key] = features[key][:min_length]
+
+        # 目标值（向量化）- 确保长度匹配
+        features["target_1d"] = pct_chg[lookback + 1:lookback + 1 + valid_samples][:min_length]
         features["target_5d"] = np.sum(
             np.lib.stride_tricks.sliding_window_view(
                 pct_chg, window_shape=5
-            )[lookback:lookback + valid_samples],
+            )[lookback:lookback + valid_samples][:min_length],
             axis=1
         )
         features["target_20d"] = np.sum(
             np.lib.stride_tricks.sliding_window_view(
                 pct_chg, window_shape=20
-            )[lookback:lookback + valid_samples],
+            )[lookback:lookback + valid_samples][:min_length],
             axis=1
         )
 
@@ -400,15 +509,20 @@ class UnifiedPredictor:
         self,
         model_result: Optional[Dict],
         features: pd.DataFrame,
-        batch_size: int = 10000
+        batch_size: int = 10000,
+        with_confidence: bool = True
     ) -> pd.DataFrame:
         """
-        批量预测（高性能版本）
+        批量预测（高性能版本，支持置信度评估）
 
         Args:
             model_result: 训练结果（包含 models 和 feature_cols）
             features: 特征数据
             batch_size: 批处理大小
+            with_confidence: 是否计算预测置信度
+
+        Returns:
+            预测结果 DataFrame
         """
         start_time = time.time()
 
@@ -420,6 +534,7 @@ class UnifiedPredictor:
 
         models = model_result["models"]
         feature_cols = model_result["feature_cols"]
+        model_metrics = model_result.get("metrics", {})
 
         # 特征对齐
         missing_cols = set(feature_cols) - set(features.columns)
@@ -470,6 +585,65 @@ class UnifiedPredictor:
             predictions["pred_5d"] * 0.5 +
             predictions["pred_20d"] * 0.2
         )
+
+        # 计算预测置信度
+        if with_confidence:
+            logger.debug("计算预测置信度...")
+
+            # 方法 1：基于模型 R²分数计算基础置信度
+            r2_1d = model_metrics.get("horizon_1d", {}).get("r2", 0.5)
+            r2_5d = model_metrics.get("horizon_5d", {}).get("r2", 0.5)
+            r2_20d = model_metrics.get("horizon_20d", {}).get("r2", 0.5)
+
+            # 基础置信度（模型整体性能）
+            base_confidence = (r2_1d * 0.3 + r2_5d * 0.5 + r2_20d * 0.2)
+
+            # 方法 2：基于预测值的离散程度（使用多模型或分位数）
+            # 这里使用预测值在历史分布中的位置来估计不确定性
+            pred_1d_std = np.std(pred_1d) if len(pred_1d) > 1 else 1.0
+            pred_5d_std = np.std(pred_5d) if len(pred_5d) > 1 else 1.0
+            pred_20d_std = np.std(pred_20d) if len(pred_20d) > 1 else 1.0
+
+            # 方法 3：基于特征空间的密度（简化的马氏距离）
+            # 计算每个样本到特征中心的距离
+            X_mean = np.mean(X, axis=0)
+            X_std = np.std(X, axis=0) + 1e-8
+            X_normalized = (X - X_mean) / X_std
+            distances = np.sqrt(np.sum(X_normalized ** 2, axis=1))
+
+            # 将距离转换为置信度（距离越远，置信度越低）
+            # 使用指数衰减函数
+            distance_confidence = np.exp(-distances / (2 * np.sqrt(X.shape[1])))
+
+            # 综合置信度 = 基础置信度 * 距离置信度
+            # 对于每个预测周期，分别计算置信度
+            predictions["confidence_1d"] = base_confidence * 0.5 + (r2_1d * 0.5) * distance_confidence
+            predictions["confidence_5d"] = base_confidence * 0.5 + (r2_5d * 0.5) * distance_confidence
+            predictions["confidence_20d"] = base_confidence * 0.5 + (r2_20d * 0.5) * distance_confidence
+
+            # 综合置信度
+            predictions["confidence"] = (
+                predictions["confidence_1d"] * 0.3 +
+                predictions["confidence_5d"] * 0.5 +
+                predictions["confidence_20d"] * 0.2
+            )
+
+            # 置信度等级（高/中/低）
+            conf_percentiles = np.percentile(predictions["confidence"], [33, 67])
+            def get_conf_level(conf):
+                if conf >= conf_percentiles[1]:
+                    return "高"
+                elif conf >= conf_percentiles[0]:
+                    return "中"
+                else:
+                    return "低"
+
+            predictions["confidence_level"] = predictions["confidence"].apply(get_conf_level)
+
+            logger.info(f"预测置信度范围：[{predictions['confidence'].min():.3f}, {predictions['confidence'].max():.3f}]")
+            logger.info(f"高置信度样本数：{(predictions['confidence_level'] == '高').sum()}")
+            logger.info(f"中置信度样本数：{(predictions['confidence_level'] == '中').sum()}")
+            logger.info(f"低置信度样本数：{(predictions['confidence_level'] == '低').sum()}")
 
         elapsed = time.time() - start_time
         logger.info(f"预测完成：{n_samples} 样本，耗时 {elapsed:.2f}s")

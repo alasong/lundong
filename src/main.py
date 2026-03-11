@@ -96,9 +96,9 @@ def main():
     parser = argparse.ArgumentParser(description="A 股热点轮动预测系统")
     parser.add_argument(
         "--mode",
-        choices=["daily", "quick", "train", "predict", "data", "history", "importance"],
+        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv"],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性)"
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证)"
     )
     parser.add_argument(
         "--date",
@@ -182,10 +182,18 @@ def main():
                 print("=" * 70)
 
                 if top_predictions:
+                    # 检查是否有置信度数据
+                    has_confidence = any('confidence' in p for p in top_predictions)
+
                     print("\n【预测 TOP10】")
                     print("-" * 100)
-                    print(f"{'排名':<6}{'板块名称':<25}{'板块说明':<15}{'综合得分':<12}{'1 日':<8}{'5 日':<8}{'20 日':<8}")
-                    print("-" * 100)
+                    if has_confidence:
+                        print(f"{'排名':<6}{'板块名称':<20}{'板块说明':<10}{'综合得分':<10}{'1 日':<8}{'5 日':<8}{'20 日':<8}{'置信度':<10}")
+                        print("-" * 100)
+                    else:
+                        print(f"{'排名':<6}{'板块名称':<25}{'板块说明':<15}{'综合得分':<12}{'1 日':<8}{'5 日':<8}{'20 日':<8}")
+                        print("-" * 100)
+
                     for i, pred in enumerate(top_predictions, 1):
                         # 获取板块名称
                         name = pred.get('concept_name', pred.get('name', pred.get('concept_code', 'N/A')))
@@ -209,8 +217,21 @@ def main():
                         else:
                             marker = "📊"
 
-                        print(f"{i:<6}{block_name:<25}{block_desc:<15}{combined:<12.2f}{p1d:<8.2f}{p5d:<8.2f}{p20d:<8.2f} {marker}")
+                        if has_confidence:
+                            conf = pred.get('confidence', 0)
+                            conf_level = pred.get('confidence_level', '')
+                            print(f"{i:<6}{block_name:<20}{block_desc:<10}{combined:<10.2f}"
+                                  f"{p1d:<8.2f}{p5d:<8.2f}{p20d:<8.2f}{conf:<10.3f} {conf_level} {marker}")
+                        else:
+                            print(f"{i:<6}{block_name:<25}{block_desc:<15}{combined:<12.2f}"
+                                  f"{p1d:<8.2f}{p5d:<8.2f}{p20d:<8.2f} {marker}")
+
                     print("-" * 100)
+
+                    # 置信度统计
+                    if has_confidence:
+                        conf_count = sum(1 for p in top_predictions if p.get('confidence_level') == '高')
+                        print(f"\n高置信度预测：{conf_count}/{len(top_predictions)} 个")
 
                     # 策略建议
                     print("\n【轮动策略】")
@@ -266,6 +287,237 @@ def main():
             from models.predictor import UnifiedPredictor
             predictor = UnifiedPredictor()
             predictor.print_feature_importance(top_n=20)
+
+        elif args.mode == "backtest":
+            # 回测验证
+            logger.info("执行回测验证")
+            from evaluation.backtester import Backtester
+            import pandas as pd
+
+            # 直接从 CSV 文件加载历史数据
+            raw_dir = settings.raw_data_dir
+
+            # 加载所有同花顺行业历史数据（ths_*_TI.csv 格式）
+            ths_files = [f for f in os.listdir(raw_dir) if f.endswith("_TI.csv")]
+
+            if not ths_files:
+                logger.error("未找到同花顺历史数据文件，请先运行历史数据采集")
+                logger.info("运行：python src/main.py --mode history --start-date 20230101 --end-date 20241231")
+                return
+
+            logger.info(f"发现 {len(ths_files)} 个历史数据文件")
+
+            # 并行加载所有文件
+            from joblib import Parallel, delayed
+
+            def load_single_file(filepath):
+                try:
+                    df = pd.read_csv(filepath, dtype={
+                        'concept_code': str,
+                        'trade_date': str,
+                        'pct_chg': float,
+                        'vol': float
+                    })
+                    # 重命名字段
+                    if 'pct_change' in df.columns:
+                        df = df.rename(columns={'pct_change': 'pct_chg'})
+                    if 'ts_code' in df.columns:
+                        df = df.rename(columns={'ts_code': 'concept_code'})
+                    return df
+                except Exception as e:
+                    logger.warning(f"加载文件 {filepath} 失败：{e}")
+                    return None
+
+            dfs = Parallel(n_jobs=-1, backend="threading")(
+                delayed(load_single_file)(os.path.join(raw_dir, f))
+                for f in ths_files
+            )
+            dfs = [df for df in dfs if df is not None]
+
+            if not dfs:
+                logger.error("无法加载任何数据文件")
+                return
+
+            concept_data = pd.concat(dfs, ignore_index=True)
+            logger.info(f"加载了 {len(concept_data)} 条历史记录")
+
+            # 应用日期筛选
+            start_date = args.start_date or "20230101"
+            end_date = args.end_date or "20241231"
+            concept_data = concept_data[
+                (concept_data["trade_date"] >= start_date) &
+                (concept_data["trade_date"] <= end_date)
+            ]
+            logger.info(f"筛选后数据：{len(concept_data)} 条记录 ({start_date} - {end_date})")
+
+            if len(concept_data) < 1000:
+                logger.error("数据量不足，无法进行回测")
+                return
+
+            # 运行回测
+            backtester = Backtester()
+
+            # 解析回测参数
+            train_windows = int(os.environ.get("BACKTEST_TRAIN", 12))
+            test_windows = int(os.environ.get("BACKTEST_TEST", 3))
+            step = int(os.environ.get("BACKTEST_STEP", 3))
+
+            logger.info(f"回测参数：训练={train_windows}月，测试={test_windows}月，步长={step}月")
+
+            results = backtester.run_walk_forward(
+                concept_data,
+                train_windows=train_windows,
+                test_windows=test_windows,
+                step=step
+            )
+
+            # 输出回测结果
+            print("\n" + "=" * 70)
+            print("回测结果汇总")
+            print("=" * 70)
+
+            if 'avg_metrics' in results:
+                m = results['avg_metrics']
+                print(f"回测折叠数：{m['folds']}")
+                print(f"平均 IC: {m['avg_ic']:.4f}")
+                print(f"平均 RankIC: {m['avg_rank_ic']:.4f}")
+                print(f"平均 Sharpe: {m['avg_sharpe']:.2f}")
+                print(f"平均收益率：{m['avg_return']:.2f}%")
+                print(f"最大回撤：{m['max_drawdown']:.2%}")
+                print(f"胜率：{m['win_rate']:.2%}")
+
+                # 折叠详情
+                if 'fold_results' in results and results['fold_results']:
+                    print("\n【各折叠详情】")
+                    print("-" * 70)
+                    print(f"{'折叠':<6}{'IC':<10}{'RankIC':<10}{'Sharpe':<10}{'收益率':<12}{'最大回撤':<12}")
+                    print("-" * 70)
+                    for fold in results['fold_results']:
+                        print(f"{fold.get('fold', 0):<6}{fold.get('ic', 0):<10.4f}"
+                              f"{fold.get('rank_ic', 0):<10.4f}{fold.get('sharpe', 0):<10.2f}"
+                              f"{fold.get('total_return', 0):<12.2f}%{fold.get('max_drawdown', 0):<12.2%}")
+                    print("-" * 70)
+            else:
+                print(f"回测失败：{results.get('error', '未知错误')}")
+
+            print("=" * 70 + "\n")
+
+        elif args.mode == "cv":
+            # 时序交叉验证（Purged K-Fold）
+            logger.info("执行时序交叉验证（Purged K-Fold）")
+            from evaluation.backtester import Backtester
+            import pandas as pd
+
+            # 直接从 CSV 文件加载历史数据
+            raw_dir = settings.raw_data_dir
+            ths_files = [f for f in os.listdir(raw_dir) if f.endswith("_TI.csv")]
+
+            if not ths_files:
+                logger.error("未找到历史数据文件")
+                return
+
+            logger.info(f"发现 {len(ths_files)} 个历史数据文件")
+
+            # 并行加载
+            from joblib import Parallel, delayed
+
+            def load_single_file(filepath):
+                try:
+                    df = pd.read_csv(filepath, dtype={
+                        'concept_code': str,
+                        'trade_date': str,
+                        'pct_chg': float
+                    })
+                    # 字段重命名映射
+                    if 'pct_change' in df.columns:
+                        df = df.rename(columns={'pct_change': 'pct_chg'})
+                    if 'ts_code' in df.columns:
+                        df = df.rename(columns={'ts_code': 'concept_code'})
+                    # 确保 concept_code 列存在
+                    if 'concept_code' not in df.columns:
+                        # 尝试从文件名提取
+                        filename = os.path.basename(filepath)
+                        if filename.startswith('ths_') and '_TI.csv' in filename:
+                            code_part = filename.replace('ths_', '').replace('_TI.csv', '')
+                            df['concept_code'] = code_part
+                    return df
+                except Exception as e:
+                    logger.warning(f"加载文件 {filepath} 失败：{e}")
+                    return None
+
+            dfs = Parallel(n_jobs=-1, backend="threading")(
+                delayed(load_single_file)(os.path.join(raw_dir, f))
+                for f in ths_files
+            )
+            dfs = [df for df in dfs if df is not None]
+
+            if not dfs:
+                logger.error("无法加载任何数据文件")
+                return
+
+            concept_data = pd.concat(dfs, ignore_index=True)
+            logger.info(f"加载了 {len(concept_data)} 条历史记录")
+
+            # 应用日期筛选
+            start_date = args.start_date or "20200101"
+            end_date = args.end_date or "20251231"
+            concept_data = concept_data[
+                (concept_data["trade_date"] >= start_date) &
+                (concept_data["trade_date"] <= end_date)
+            ]
+            logger.info(f"筛选后数据：{len(concept_data)} 条记录")
+
+            # 运行交叉验证
+            backtester = Backtester()
+
+            # 解析参数
+            n_splits = int(os.environ.get("CV_SPLITS", 5))
+            train_months = int(os.environ.get("CV_TRAIN_MONTHS", 24))
+            purge_days = int(os.environ.get("CV_PURGE", 5))
+            embargo_days = int(os.environ.get("CV_EMBARGO", 2))
+
+            logger.info(f"交叉验证参数：n_splits={n_splits}, train_window={train_months}月，"
+                       f"purge={purge_days}天，embargo={embargo_days}天")
+
+            results = backtester.run_purged_kfold(
+                concept_data,
+                n_splits=n_splits,
+                train_window_months=train_months,
+                purge_days=purge_days,
+                embargo_days=embargo_days
+            )
+
+            # 输出结果
+            print("\n" + "=" * 70)
+            print("时序交叉验证结果（Purged K-Fold）")
+            print("=" * 70)
+
+            if 'avg_metrics' in results:
+                m = results['avg_metrics']
+                print(f"\n验证折叠数：{m['folds']}/{n_splits}")
+                print(f"平均 IC: {m['avg_ic']:.4f} (±{m['ic_std']:.4f})")
+                print(f"平均 RankIC: {m['avg_rank_ic']:.4f}")
+                print(f"平均 Sharpe: {m['avg_sharpe']:.2f} (±{m['sharpe_std']:.2f})")
+                print(f"平均收益率：{m['avg_return']:.2f}%")
+                print(f"最大回撤：{m['max_drawdown']:.2%}")
+                print(f"胜率：{m['win_rate']:.2%}")
+
+                # 折叠详情
+                if 'fold_results' in results and results['fold_results']:
+                    print("\n【各折叠详情】")
+                    print("-" * 90)
+                    print(f"{'折叠':<6}{'时间范围':<25}{'IC':<10}{'RankIC':<10}{'Sharpe':<10}{'收益率':<12}")
+                    print("-" * 90)
+                    for fold in results['fold_results']:
+                        time_range = f"{fold.get('test_start', 'N/A')} - {fold.get('test_end', 'N/A')}"
+                        print(f"{fold.get('fold', 0):<6}{time_range:<25}"
+                              f"{fold.get('ic', 0):<10.4f}{fold.get('rank_ic', 0):<10.4f}"
+                              f"{fold.get('sharpe', 0):<10.2f}{fold.get('total_return', 0):<12.2f}%")
+                    print("-" * 90)
+            else:
+                print(f"验证失败：{results.get('error', '未知错误')}")
+
+            print("=" * 70 + "\n")
 
     except Exception as e:
         logger.error(f"执行失败：{e}")
