@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Git Pre-push Hook
+Git Pre-push Hook (优化版)
 推送前运行完整测试套件
+- 实时输出测试结果
+- 超时 10 分钟
+- 使用 -x 在第一次失败时停止（节省时间）
 """
 import subprocess
 import sys
@@ -11,19 +14,35 @@ import os
 
 def get_project_root() -> str:
     """获取项目根目录"""
-    hook_dir = os.path.dirname(os.path.abspath(__file__))  # .git/hooks
+    hook_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.dirname(os.path.dirname(hook_dir))
 
 
-def run_command(cmd: list, timeout: int = 300) -> tuple:
-    """运行命令并返回结果"""
+def run_tests_live(cmd: list, timeout: int = 600) -> tuple:
+    """运行测试并实时输出"""
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=get_project_root())
-        return result.returncode, result.stdout, result.stderr
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            cwd=get_project_root(),
+            bufsize=1
+        )
+
+        output_lines = []
+        for line in process.stdout:
+            print(line, end='')
+            output_lines.append(line)
+
+        process.wait(timeout=timeout)
+        return process.returncode, ''.join(output_lines)
+
     except subprocess.TimeoutExpired:
-        return -1, "", f"Timeout after {timeout}s"
+        process.kill()
+        return -1, f"Timeout after {timeout}s"
     except Exception as e:
-        return 1, "", str(e)
+        return 1, str(e)
 
 
 def main():
@@ -32,33 +51,33 @@ def main():
     print("Git Pre-push 测试")
     print("=" * 60)
 
-    # 检查 pytest 是否存在
     venv_pytest = os.path.join(get_project_root(), '.venv', 'bin', 'pytest')
 
     if os.path.exists(venv_pytest):
-        cmd = [venv_pytest, "tests/", "-v", "--tb=short", "--timeout=60"]
+        cmd = [venv_pytest, "tests/", "-v", "--tb=short", "--timeout=60", "-x"]
         print(f"使用虚拟环境 pytest")
     else:
-        cmd = ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "--timeout=60"]
+        cmd = ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "--timeout=60", "-x"]
         print("使用系统 pytest")
 
-    print(f"运行完整测试套件...")
+    print(f"运行完整测试套件（超时 10 分钟）...")
     print("-" * 60)
 
-    code, stdout, stderr = run_command(cmd, timeout=300)
-
-    # 输出结果
-    print(stdout)
-    if stderr:
-        print(stderr)
+    code, output = run_tests_live(cmd, timeout=600)
 
     print("-" * 60)
+
     if code == 0:
         print("✓ 所有测试通过，允许推送")
         sys.exit(0)
+    elif code == -1:
+        print("❌ 测试超时（10 分钟），推送被阻止")
+        print("\n建议:")
+        print("  1. git push --no-verify 跳过测试")
+        print("  2. 本地运行测试查看详细")
+        sys.exit(1)
     else:
         print("❌ 测试失败，推送被阻止")
-        print("\n提示：可以使用 --no-verify 跳过测试推送（不推荐）")
         sys.exit(1)
 
 
