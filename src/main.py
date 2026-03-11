@@ -97,9 +97,9 @@ def main():
     parser = argparse.ArgumentParser(description="A 股热点轮动预测系统")
     parser.add_argument(
         "--mode",
-        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list"],
+        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list", "dedup"],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据)"
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重)"
     )
     parser.add_argument(
         "--date",
@@ -374,6 +374,59 @@ def main():
             else:
                 print("\n无其他数据文件")
 
+            print("=" * 70 + "\n")
+
+        elif args.mode == "dedup":
+            # 数据去重
+            logger.info("执行数据去重")
+            import pandas as pd_local
+            raw_dir = settings.raw_data_dir
+
+            if not os.path.exists(raw_dir):
+                logger.warning("数据目录不存在")
+                return
+
+            # 处理同花顺数据
+            ths_files = [f for f in os.listdir(raw_dir) if f.endswith("_TI.csv")]
+
+            if not ths_files:
+                logger.info("未找到需要去重的文件")
+                return
+
+            total_removed = 0
+            files_processed = 0
+
+            print("\n" + "=" * 70)
+            print("数据去重结果")
+            print("=" * 70)
+
+            for filepath in sorted(ths_files):
+                full_path = os.path.join(raw_dir, filepath)
+                try:
+                    df = pd_local.read_csv(full_path)
+                    original_count = len(df)
+
+                    # 按 trade_date 去重，保留第一条
+                    if 'trade_date' in df.columns:
+                        df_dedup = df.drop_duplicates(subset=['trade_date'], keep='first')
+                    else:
+                        df_dedup = df
+
+                    dedup_count = len(df_dedup)
+                    removed = original_count - dedup_count
+
+                    if removed > 0:
+                        # 保存去重后的数据
+                        df_dedup.to_csv(full_path, index=False)
+                        total_removed += removed
+                        files_processed += 1
+                        print(f"{filepath}: 移除 {removed} 条重复记录 ({original_count} -> {dedup_count})")
+
+                except Exception as e:
+                    logger.warning(f"处理文件 {filepath} 失败：{e}")
+
+            print("-" * 70)
+            print(f"完成：处理 {files_processed} 个文件，共移除 {total_removed} 条重复记录")
             print("=" * 70 + "\n")
 
         elif args.mode == "backtest":
