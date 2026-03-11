@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from loguru import logger
 import sys
 import os
+import pandas as pd
 
 # 添加 src 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -96,9 +97,9 @@ def main():
     parser = argparse.ArgumentParser(description="A 股热点轮动预测系统")
     parser.add_argument(
         "--mode",
-        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv"],
+        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list"],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证)"
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据)"
     )
     parser.add_argument(
         "--date",
@@ -287,6 +288,93 @@ def main():
             from models.predictor import UnifiedPredictor
             predictor = UnifiedPredictor()
             predictor.print_feature_importance(top_n=20)
+
+        elif args.mode == "list":
+            # 查看已采集的数据
+            logger.info("查看已采集的数据")
+            from data.name_mapper import load_name_mapping, get_block_name
+            raw_dir = settings.raw_data_dir
+
+            if not os.path.exists(raw_dir):
+                logger.warning("数据目录不存在")
+                return
+
+            # 统计文件
+            ths_files = [f for f in os.listdir(raw_dir) if f.endswith("_TI.csv")]
+            other_files = [f for f in os.listdir(raw_dir) if f.endswith(".csv") and not f.endswith("_TI.csv")]
+
+            print("\n" + "=" * 70)
+            print("已采集的数据概览")
+            print("=" * 70)
+
+            # 同花顺数据
+            if ths_files:
+                print(f"\n【同花顺板块数据】{len(ths_files)} 个文件")
+                print("-" * 70)
+                print(f"{'代码':<15}{'板块名称':<25}{'记录数':<12}{'日期范围':<30}")
+                print("-" * 70)
+
+                # 加载名称映射
+                name_mapping = load_name_mapping()
+
+                # 统计每个文件
+                file_stats = []
+                import pandas as pd_local
+                for filepath in sorted(ths_files)[:50]:  # 只显示前 50 个
+                    try:
+                        df = pd_local.read_csv(os.path.join(raw_dir, filepath), nrows=1)
+                        if 'ts_code' in df.columns:
+                            code = df['ts_code'].iloc[0]
+                        else:
+                            code = filepath.replace('ths_', '').replace('_TI.csv', '')
+
+                        # 读取完整文件获取记录数和日期范围
+                        full_df = pd_local.read_csv(os.path.join(raw_dir, filepath))
+                        record_count = len(full_df)
+
+                        if 'trade_date' in full_df.columns:
+                            date_min = str(full_df['trade_date'].min())
+                            date_max = str(full_df['trade_date'].max())
+                            date_range = f"{date_min} - {date_max}"
+                        else:
+                            date_range = "N/A"
+
+                        # 获取板块名称
+                        block_name = get_block_name(code, name_mapping)
+
+                        file_stats.append({
+                            'code': code,
+                            'name': block_name,
+                            'records': record_count,
+                            'date_range': date_range
+                        })
+                    except Exception as e:
+                        logger.warning(f"读取文件 {filepath} 失败：{e}")
+
+                # 按代码排序并显示
+                file_stats.sort(key=lambda x: x['code'])
+                for stat in file_stats:
+                    print(f"{stat['code']:<15}{stat['name']:<25}{stat['records']:<12}{stat['date_range']:<30}")
+
+                if len(ths_files) > 50:
+                    print(f"... 还有 {len(ths_files) - 50} 个文件未显示")
+                print("-" * 70)
+
+                # 统计信息
+                total_records = sum(s['records'] for s in file_stats)
+                print(f"总计：{len(ths_files)} 个文件，{total_records:,} 条记录")
+            else:
+                print("\n未找到同花顺板块数据")
+
+            # 其他数据
+            if other_files:
+                print(f"\n【其他数据】{len(other_files)} 个文件")
+                for f in other_files:
+                    print(f"  - {f}")
+            else:
+                print("\n无其他数据文件")
+
+            print("=" * 70 + "\n")
 
         elif args.mode == "backtest":
             # 回测验证
