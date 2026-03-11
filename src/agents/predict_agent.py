@@ -301,6 +301,7 @@ class PredictAgent(BaseAgent):
         # 优先从数据库加载
         try:
             from data.database import SQLiteDatabase
+            from data.name_mapper import load_name_mapping, get_block_name
             db = SQLiteDatabase()
 
             df = db.get_all_concept_data()
@@ -312,9 +313,11 @@ class PredictAgent(BaseAgent):
                 if 'ts_code' in df.columns:
                     df = df.rename(columns={'ts_code': 'concept_code'})
 
-                # 添加 name 字段
+                # 添加 name 字段 - 使用名称映射获取真实名称
                 if 'name' not in df.columns:
-                    df['name'] = df['concept_code']
+                    name_mapping = load_name_mapping()
+                    df['name'] = df['concept_code'].apply(lambda x: get_block_name(x, name_mapping))
+                    df['concept_name'] = df['name']
 
                 data["concept"] = df
                 logger.info(f"从数据库加载数据：{len(df):,} 条记录")

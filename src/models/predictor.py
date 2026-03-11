@@ -537,6 +537,9 @@ class UnifiedPredictor:
         feature_cols = model_result["feature_cols"]
         model_metrics = model_result.get("metrics", {})
 
+        # 获取权重配置
+        weights = self.HORIZON_WEIGHTS
+
         # 特征对齐
         missing_cols = set(feature_cols) - set(features.columns)
         if missing_cols:
@@ -580,9 +583,8 @@ class UnifiedPredictor:
         predictions["pred_5d"] = pred_5d
         predictions["pred_20d"] = pred_20d
 
-        # 综合评分（加权）- 使用配置权重
-        weights = self.HORIZON_WEIGHTS
-        predictions["combined_score"] = (
+        # 先计算基础综合评分（用于置信度等级划分）
+        base_score = (
             predictions["pred_1d"] * weights["1d"] +
             predictions["pred_5d"] * weights["5d"] +
             predictions["pred_20d"] * weights["20d"]
@@ -632,23 +634,35 @@ class UnifiedPredictor:
                 predictions["confidence_20d"] * weights["20d"]
             )
 
-            # 置信度等级（高/中/低）
-            conf_percentiles = np.percentile(predictions["confidence"], [33, 67])
+            # 置信度等级（高/中/低）- 基于综合得分排序后的相对位置
+            # 这样 TOP 推荐中会有高/中/低置信度的分布
+            base_score_rank = base_score.rank(pct=True)
 
-            def get_conf_level(conf: float) -> str:
-                if conf >= conf_percentiles[1]:
+            def get_conf_level(score_pct: float) -> str:
+                # 综合得分前 30% 为高置信度推荐
+                if score_pct >= 0.70:
                     return "高"
-                elif conf >= conf_percentiles[0]:
+                elif score_pct >= 0.40:
                     return "中"
                 else:
                     return "低"
 
-            predictions["confidence_level"] = predictions["confidence"].apply(get_conf_level)
+            predictions["confidence_level"] = base_score_rank.apply(get_conf_level)
 
             logger.info(f"预测置信度范围：[{predictions['confidence'].min():.3f}, {predictions['confidence'].max():.3f}]")
             logger.info(f"高置信度样本数：{(predictions['confidence_level'] == '高').sum()}")
             logger.info(f"中置信度样本数：{(predictions['confidence_level'] == '中').sum()}")
             logger.info(f"低置信度样本数：{(predictions['confidence_level'] == '低').sum()}")
+
+            # 综合评分 = 基础评分 * 置信度因子（让高置信度的预测排前面）
+            # 归一化置信度到 0.8-1.2 范围，适度影响排序
+            conf_min = predictions["confidence"].min()
+            conf_max = predictions["confidence"].max()
+            conf_normalized = 0.8 + 0.4 * (predictions["confidence"] - conf_min) / (conf_max - conf_min + 1e-8)
+            predictions["combined_score"] = base_score * conf_normalized
+        else:
+            # 无置信度时使用原始预测值
+            predictions["combined_score"] = base_score
 
         elapsed = time.time() - start_time
         logger.info(f"预测完成：{n_samples} 样本，耗时 {elapsed:.2f}s")
