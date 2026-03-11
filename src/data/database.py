@@ -1,0 +1,683 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+SQLite 数据库管理模块
+支持高并发写入、实时去重、增量更新
+"""
+import os
+import sys
+import sqlite3
+import pandas as pd
+from typing import List, Dict, Optional, Tuple, Any
+from loguru import logger
+from contextlib import contextmanager
+from queue import Queue
+from threading import Lock
+from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import settings
+
+
+class SQLiteDatabase:
+    """
+    SQLite 数据库管理类
+
+    特性:
+    - WAL 模式支持高并发写入
+    - 连接池管理数据库连接
+    - 批量插入优化性能
+    - 唯一约束实现实时去重
+    - 支持增量更新和断点续传
+    """
+
+    def __init__(self, db_path: str = None, pool_size: int = 5):
+        """
+        初始化数据库
+
+        Args:
+            db_path: 数据库文件路径
+            pool_size: 连接池大小
+        """
+        if db_path is None:
+            # 使用配置中的数据库路径
+            db_url = settings.database_url
+            if db_url.startswith("sqlite:///"):
+                db_path = db_url.replace("sqlite:///", "")
+            else:
+                db_path = "data/stock.db"
+
+        # 确保目录存在
+        db_dir = os.path.dirname(os.path.abspath(db_path))
+        os.makedirs(db_dir, exist_ok=True)
+
+        self.db_path = db_path
+        self.pool_size = pool_size
+        self._pool: Queue = Queue(maxsize=pool_size)
+        self._pool_lock = Lock()
+        self._initialized = False
+
+        # 初始化数据库
+        self._init_db()
+
+    def _init_db(self):
+        """初始化数据库（WAL 模式支持高并发）"""
+        logger.info(f"初始化数据库：{self.db_path}")
+
+        # 创建连接进行初始化
+        conn = sqlite3.connect(self.db_path)
+        try:
+            # WAL 模式 - 读写不阻塞
+            conn.execute("PRAGMA journal_mode=WAL")
+            # 平衡性能和安全性
+            conn.execute("PRAGMA synchronous=NORMAL")
+            # 64MB 缓存
+            conn.execute("PRAGMA cache_size=-64000")
+            # 内存临时表
+            conn.execute("PRAGMA temp_store=MEMORY")
+            # 设置忙碌超时（5 秒）
+            conn.execute("PRAGMA busy_timeout=5000")
+
+            conn.commit()
+
+            # 创建表结构
+            self._create_tables(conn)
+
+            logger.info("数据库初始化完成（WAL 模式）")
+        finally:
+            conn.close()
+
+        # 预填充连接池
+        for _ in range(self.pool_size):
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA cache_size=-64000")
+            conn.execute("PRAGMA temp_store=MEMORY")
+            conn.execute("PRAGMA busy_timeout=5000")
+            self._pool.put(conn)
+
+        self._initialized = True
+
+    def _create_tables(self, conn: sqlite3.Connection):
+        """创建数据库表结构"""
+        logger.info("创建数据表...")
+
+        # 板块行情数据表（完整字段）
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS concept_daily (
+                ts_code TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                pre_close REAL,
+                avg_price REAL,
+                change REAL,
+                pct_change REAL,
+                vol REAL,
+                turnover_rate REAL,
+                amount REAL,
+                change_pct REAL,
+                PRIMARY KEY (ts_code, trade_date)
+            )
+        """)
+
+        # 板块列表元数据
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS concept_info (
+                ts_code TEXT PRIMARY KEY,
+                name TEXT,
+                type TEXT,
+                count INTEGER,
+                exchange TEXT,
+                list_date TEXT,
+                updated_at TEXT
+            )
+        """)
+
+        # 行业分类元数据
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS industry_info (
+                ts_code TEXT PRIMARY KEY,
+                name TEXT,
+                level INTEGER,
+                parent_code TEXT,
+                updated_at TEXT
+            )
+        """)
+
+        # 采集任务队列（支持断点续传）
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS collect_task (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts_code TEXT NOT NULL,
+                start_date TEXT,
+                end_date TEXT,
+                status TEXT DEFAULT 'pending',
+                error_message TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        """)
+
+        # 创建索引加速查询
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_date ON concept_daily(trade_date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ts_code ON concept_daily(ts_code)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_concept_date ON concept_daily(ts_code, trade_date)")
+
+        conn.commit()
+        logger.info("数据表创建完成")
+
+    @contextmanager
+    def get_connection(self):
+        """从连接池获取连接（上下文管理器）"""
+        conn = None
+        try:
+            conn = self._pool.get(timeout=30)
+            yield conn
+        finally:
+            if conn:
+                self._pool.put(conn)
+
+    def batch_insert(
+        self,
+        table: str,
+        data: List[Dict[str, Any]],
+        replace: bool = True
+    ) -> int:
+        """
+        批量插入数据（带唯一约束去重）
+
+        Args:
+            table: 表名
+            data: 数据列表，每个元素为 dict
+            replace: True=覆盖重复，False=跳过重复
+
+        Returns:
+            插入/更新的记录数
+        """
+        if not data:
+            return 0
+
+        with self.get_connection() as conn:
+            try:
+                columns = list(data[0].keys())
+                placeholders = ','.join(['?' for _ in columns])
+                col_names = ','.join(columns)
+
+                if replace:
+                    # 覆盖写入（INSERT OR REPLACE）
+                    sql = f"""
+                        INSERT OR REPLACE INTO {table}
+                        ({col_names})
+                        VALUES ({placeholders})
+                    """
+                else:
+                    # 跳过重复（INSERT OR IGNORE）
+                    sql = f"""
+                        INSERT OR IGNORE INTO {table}
+                        ({col_names})
+                        VALUES ({placeholders})
+                    """
+
+                # 准备数据
+                rows = [[row.get(col) for col in columns] for row in data]
+
+                # 批量执行
+                cursor = conn.executemany(sql, rows)
+                conn.commit()
+
+                count = cursor.rowcount
+                mode = "覆盖" if replace else "跳过"
+                logger.debug(f"批量插入 {table}: {count} 条记录 ({mode}模式)")
+                return count
+
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"批量插入失败：{e}")
+                raise
+
+    def batch_insert_dataframe(
+        self,
+        table: str,
+        df: pd.DataFrame,
+        replace: bool = True
+    ) -> int:
+        """
+        批量插入 DataFrame 数据
+
+        Args:
+            table: 表名
+            df: pandas DataFrame
+            replace: True=覆盖重复，False=跳过重复
+
+        Returns:
+            插入/更新的记录数
+        """
+        if df.empty:
+            return 0
+
+        # 转换为 dict 列表
+        data = df.to_dict(orient='records')
+        return self.batch_insert(table, data, replace)
+
+    def query(
+        self,
+        sql: str,
+        params: tuple = None
+    ) -> List[Tuple]:
+        """
+        查询数据
+
+        Args:
+            sql: SQL 语句
+            params: 参数元组
+
+        Returns:
+            查询结果列表
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if params:
+                cursor.execute(sql, params)
+            else:
+                cursor.execute(sql)
+            return cursor.fetchall()
+
+    def query_to_dataframe(
+        self,
+        sql: str,
+        params: tuple = None
+    ) -> pd.DataFrame:
+        """
+        查询数据并返回 DataFrame
+
+        Args:
+            sql: SQL 语句
+            params: 参数元组
+
+        Returns:
+            pandas DataFrame
+        """
+        with self.get_connection() as conn:
+            return pd.read_sql_query(sql, conn, params=params)
+
+    def execute(
+        self,
+        sql: str,
+        params: tuple = None
+    ) -> int:
+        """
+        执行 SQL 语句（UPDATE/DELETE）
+
+        Args:
+            sql: SQL 语句
+            params: 参数元组
+
+        Returns:
+            影响的行数
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if params:
+                cursor.execute(sql, params)
+            else:
+                cursor.execute(sql)
+            conn.commit()
+            return cursor.rowcount
+
+    def get_missing_dates(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str
+    ) -> List[str]:
+        """
+        获取缺失的交易日期（用于增量更新）
+
+        Args:
+            ts_code: 板块代码
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            缺失的日期列表
+        """
+        sql = """
+            SELECT DISTINCT trade_date
+            FROM concept_daily
+            WHERE ts_code = ?
+              AND trade_date BETWEEN ? AND ?
+        """
+        results = self.query(sql, (ts_code, start_date, end_date))
+        existing_dates = set(row[0] for row in results)
+
+        # 生成所有交易日（简单实现，实际应该从交易日历获取）
+        from datetime import timedelta
+        start = datetime.strptime(start_date, "%Y%m%d")
+        end = datetime.strptime(end_date, "%Y%m%d")
+
+        all_dates = []
+        current = start
+        while current <= end:
+            # 跳过周末
+            if current.weekday() < 5:
+                date_str = current.strftime("%Y%m%d")
+                if date_str not in existing_dates:
+                    all_dates.append(date_str)
+            current += timedelta(days=1)
+
+        return all_dates
+
+    def has_data(
+        self,
+        ts_code: str,
+        trade_date: str
+    ) -> bool:
+        """
+        检查数据是否存在
+
+        Args:
+            ts_code: 板块代码
+            trade_date: 交易日期
+
+        Returns:
+            是否存在
+        """
+        sql = """
+            SELECT 1 FROM concept_daily
+            WHERE ts_code = ? AND trade_date = ?
+            LIMIT 1
+        """
+        results = self.query(sql, (ts_code, trade_date))
+        return len(results) > 0
+
+    def get_latest_date(self, ts_code: str = None) -> Optional[str]:
+        """
+        获取最新交易日期
+
+        Args:
+            ts_code: 板块代码，如果为 None 则返回所有板块的最新日期
+
+        Returns:
+            最新日期字符串 (YYYYMMDD)
+        """
+        if ts_code:
+            sql = """
+                SELECT MAX(trade_date) FROM concept_daily
+                WHERE ts_code = ?
+            """
+            results = self.query(sql, (ts_code,))
+        else:
+            sql = "SELECT MAX(trade_date) FROM concept_daily"
+            results = self.query(sql)
+
+        if results and results[0][0]:
+            return str(results[0][0])
+        return None
+
+    def get_data_range(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str
+    ) -> pd.DataFrame:
+        """
+        获取指定范围的数据
+
+        Args:
+            ts_code: 板块代码
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            pandas DataFrame
+        """
+        sql = """
+            SELECT * FROM concept_daily
+            WHERE ts_code = ?
+              AND trade_date >= ?
+              AND trade_date <= ?
+            ORDER BY trade_date
+        """
+        return self.query_to_dataframe(sql, (ts_code, start_date, end_date))
+
+    def get_all_concept_data(self, trade_date: str = None) -> pd.DataFrame:
+        """
+        获取所有板块数据
+
+        Args:
+            trade_date: 交易日期，如果为 None 则返回所有数据
+
+        Returns:
+            pandas DataFrame
+        """
+        if trade_date:
+            sql = """
+                SELECT * FROM concept_daily
+                WHERE trade_date = ?
+                ORDER BY ts_code
+            """
+            return self.query_to_dataframe(sql, (trade_date,))
+        else:
+            sql = "SELECT * FROM concept_daily ORDER BY ts_code, trade_date"
+            return self.query_to_dataframe(sql)
+
+    def save_concept_info(self, info: Dict[str, Any]):
+        """保存板块信息"""
+        info['updated_at'] = datetime.now().strftime("%Y%m%d")
+        self.batch_insert('concept_info', [info], replace=True)
+
+    def save_industry_info(self, info: Dict[str, Any]):
+        """保存行业信息"""
+        info['updated_at'] = datetime.now().strftime("%Y%m%d")
+        self.batch_insert('industry_info', [info], replace=True)
+
+    def save_concept_daily(
+        self,
+        ts_code: str,
+        data: Dict[str, Any],
+        replace: bool = True
+    ):
+        """
+        保存板块日线数据
+
+        Args:
+            ts_code: 板块代码
+            data: 数据字典
+            replace: 是否覆盖已有数据
+        """
+        data['ts_code'] = ts_code
+        self.batch_insert('concept_daily', [data], replace)
+
+    def save_concept_daily_batch(
+        self,
+        df: pd.DataFrame,
+        replace: bool = True
+    ):
+        """
+        批量保存板块日线数据
+
+        Args:
+            df: DataFrame (必须包含 ts_code, trade_date 等列)
+            replace: 是否覆盖已有数据
+        """
+        self.batch_insert_dataframe('concept_daily', df, replace)
+
+    def create_collect_task(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str
+    ) -> int:
+        """
+        创建采集任务
+
+        Args:
+            ts_code: 板块代码
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            任务 ID
+        """
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sql = """
+            INSERT INTO collect_task (ts_code, start_date, end_date, status, created_at, updated_at)
+            VALUES (?, ?, ?, 'pending', ?, ?)
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, (ts_code, start_date, end_date, now, now))
+            conn.commit()
+            return cursor.lastrowid
+
+    def update_task_status(
+        self,
+        task_id: int,
+        status: str,
+        error_message: str = None
+    ):
+        """
+        更新任务状态
+
+        Args:
+            task_id: 任务 ID
+            status: 新状态 (pending/running/done/failed)
+            error_message: 错误信息
+        """
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if error_message:
+            sql = """
+                UPDATE collect_task
+                SET status = ?, error_message = ?, updated_at = ?
+                WHERE id = ?
+            """
+            self.execute(sql, (status, error_message, now, task_id))
+        else:
+            sql = """
+                UPDATE collect_task
+                SET status = ?, updated_at = ?
+                WHERE id = ?
+            """
+            self.execute(sql, (status, now, task_id))
+
+    def get_pending_tasks(self, limit: int = 100) -> List[Dict]:
+        """
+        获取待处理的任务
+
+        Args:
+            limit: 数量限制
+
+        Returns:
+            任务列表
+        """
+        sql = """
+            SELECT id, ts_code, start_date, end_date
+            FROM collect_task
+            WHERE status = 'pending'
+            ORDER BY created_at
+            LIMIT ?
+        """
+        results = self.query(sql, (limit,))
+        return [
+            {
+                'id': r[0],
+                'ts_code': r[1],
+                'start_date': r[2],
+                'end_date': r[3]
+            }
+            for r in results
+        ]
+
+    def export_to_csv(
+        self,
+        query: str,
+        params: tuple,
+        output_path: str
+    ):
+        """
+        将查询结果导出为 CSV（兼容下游分析流程）
+
+        Args:
+            query: SQL 查询语句
+            params: 查询参数
+            output_path: 输出文件路径
+        """
+        df = self.query_to_dataframe(query, params)
+        df.to_csv(output_path, index=False)
+        logger.info(f"导出数据到 CSV: {output_path} ({len(df)} 条记录)")
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """获取数据库统计信息"""
+        stats = {}
+
+        # 总记录数
+        sql = "SELECT COUNT(*) FROM concept_daily"
+        result = self.query(sql)
+        stats['total_records'] = result[0][0] if result else 0
+
+        # 板块数量
+        sql = "SELECT COUNT(DISTINCT ts_code) FROM concept_daily"
+        result = self.query(sql)
+        stats['concept_count'] = result[0][0] if result else 0
+
+        # 日期范围
+        sql = "SELECT MIN(trade_date), MAX(trade_date) FROM concept_daily"
+        result = self.query(sql)
+        if result and result[0][0]:
+            stats['date_range'] = (str(result[0][0]), str(result[0][1]))
+        else:
+            stats['date_range'] = (None, None)
+
+        # 检查重复
+        sql = """
+            SELECT COUNT(*) - COUNT(DISTINCT ts_code || trade_date) as dup_count
+            FROM concept_daily
+        """
+        result = self.query(sql)
+        stats['duplicates'] = result[0][0] if result else 0
+
+        return stats
+
+    def vacuum(self):
+        """清理数据库空间"""
+        logger.info("清理数据库空间...")
+        with self.get_connection() as conn:
+            conn.execute("VACUUM")
+            conn.commit()
+        logger.info("数据库清理完成")
+
+    def close(self):
+        """关闭数据库连接"""
+        logger.info("关闭数据库连接...")
+        while not self._pool.empty():
+            try:
+                conn = self._pool.get_nowait()
+                conn.close()
+            except Exception:
+                pass
+        self._initialized = False
+
+
+# 全局数据库实例
+_db_instance: Optional[SQLiteDatabase] = None
+
+
+def get_database(db_path: str = None, pool_size: int = 5) -> SQLiteDatabase:
+    """获取数据库单例实例"""
+    global _db_instance
+    if _db_instance is None:
+        _db_instance = SQLiteDatabase(db_path, pool_size)
+    return _db_instance
+
+
+def init_database(db_path: str = None, pool_size: int = 5) -> SQLiteDatabase:
+    """强制初始化新的数据库实例"""
+    global _db_instance
+    if _db_instance is not None:
+        _db_instance.close()
+    _db_instance = SQLiteDatabase(db_path, pool_size)
+    return _db_instance

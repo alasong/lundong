@@ -61,7 +61,26 @@ ts_code,trade_date,open,high,low,close,pre_close,avg_price,change,pct_change,vol
 
 ### 数据存储目录
 
+**V2.0 新版存储架构（SQLite 数据库）**：
+
 ```
+data/
+├── raw/
+│   └── stock.db               # SQLite 数据库（统一存储所有板块数据）
+│   ├── stock.db-wal           # WAL 日志（自动管理）
+│   ├── stock.db-shm           # 共享内存（自动管理）
+│   ├── ths_indices.csv        # 板块列表（元数据）
+│   └── ths_industries_*.csv   # 行业分类（元数据）
+│
+├── processed/
+│   └── merged_concept_data.csv  # 从数据库导出的合并文件（向后兼容）
+│
+├── models/                   # 训练好的模型
+├── patterns/                 # 学习的规律（JSON）
+└── results/                  # 分析结果
+```
+
+**旧版存储架构（CSV 文件）**：
 data/
 ├── raw/                      # 原始 CSV 数据（采集的原始文件）
 │   ├── ths_all_history_*.csv # 历史合集文件（建议保留）
@@ -76,12 +95,42 @@ data/
 └── results/                  # 分析结果
 ```
 
-**存储优化说明**：
-- `merged_concept_data.csv` 是合并去重后的完整数据，作为主要数据源
-- 单板块文件 (`ths_*_TI.csv`) 与合集文件数据大量重复（约 52% 重复率）
-- 可运行 `--mode storage --storage-action=cleanup` 清理冗余单文件，释放磁盘空间
-- 清理后数据统一从 `merged_concept_data.csv` 读取，不影响训练和预测
-- **清理效果**：488 个单文件 (144M) → 只保留合并文件 (49M)，节省约 66% 空间
+---
+
+### 存储架构升级（V2.0）
+
+**新版 SQLite 存储方案特性**：
+
+| 特性 | 旧版 CSV | 新版 SQLite |
+|------|----------|-------------|
+| **并发写入** | 文件锁冲突 | WAL 模式支持并发 |
+| **去重** | 事后批处理 | 实时（唯一约束） |
+| **增量更新** | 手动判断 | 自动（主键判断） |
+| **存储空间** | 大量小文件 + 冗余 | 单文件，紧凑 |
+| **查询性能** | 慢（读多文件） | 快（索引加速） |
+| **数据完整性** | 弱 | 强（事务保证） |
+
+**核心优势**：
+- **高并发写入**：使用 WAL 模式，支持多进程安全写入
+- **实时去重**：通过 `(ts_code, trade_date)` 复合主键保证唯一性
+- **增量更新**：自动判断缺失数据，支持断点续传
+- **统一存储**：单个数据库文件，无碎片
+
+**迁移工具**：
+```bash
+# 从旧版 CSV 迁移到新版数据库
+python src/data/csv_migrator.py --action all
+
+# 仅迁移（不清理 CSV）
+python src/data/csv_migrator.py --action migrate --keep-csv
+
+# 验证迁移结果
+python src/data/csv_migrator.py --action verify
+```
+
+---
+
+### 旧版 CSV 存储说明（已废弃）
 
 ---
 
@@ -93,7 +142,7 @@ data/
 # 查看已采集的数据
 python src/main.py --mode list
 
-# 数据去重
+# 数据去重（数据库自动去重，无需手动执行）
 python src/main.py --mode dedup
 
 # 采集基础数据（板块列表 + 近期行情）
@@ -102,11 +151,33 @@ python src/main.py --mode data
 # 采集历史数据（指定日期范围）
 python src/main.py --mode history --start-date 20230101 --end-date 20241231
 
-# 高速并发采集（推荐）
+# 高速并发采集（推荐，直接写入数据库）
 python src/main.py --mode fast --start-date 20200101 --end-date 20251231
 
-# 数据整理（合并 + 去重 + 更新）
+# 数据整理（从数据库导出 CSV）
 python src/main.py --mode organize
+```
+
+### 数据库管理
+
+```bash
+# 从 CSV 迁移到数据库
+python src/data/csv_migrator.py --action all
+
+# 仅迁移
+python src/data/csv_migrator.py --action migrate
+
+# 验证迁移结果
+python src/data/csv_migrator.py --action verify
+
+# 清理已迁移的 CSV 文件
+python src/data/csv_migrator.py --action cleanup
+
+# 查看数据库统计
+python src/data/storage_manager.py --action stats
+
+# 验证数据完整性
+python src/data/storage_manager.py --action verify
 ```
 
 ### 模型训练

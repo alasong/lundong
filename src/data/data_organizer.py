@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 数据整理工具
-合并、去重、优化数据存储
+从数据库读取数据，导出 CSV 供下游分析使用
 """
 import os
 import sys
@@ -14,19 +14,27 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import settings
+from data.database import get_database
 
 
 class DataOrganizer:
-    """数据整理器"""
+    """数据整理器（基于 SQLite 数据库）"""
 
-    def __init__(self, raw_dir: str = None):
-        self.raw_dir = raw_dir or settings.raw_data_dir
+    def __init__(self, db=None):
+        """
+        初始化整理器
+
+        Args:
+            db: 数据库实例，如果为 None 则使用全局单例
+        """
+        self.db = db or get_database()
         self.processed_dir = os.path.join(settings.data_dir, "processed")
+        self.raw_dir = settings.raw_data_dir
         os.makedirs(self.processed_dir, exist_ok=True)
 
     def merge_all_data(self, output_file: str = "merged_concept_data.csv") -> pd.DataFrame:
         """
-        合并所有概念板块数据
+        从数据库导出合并数据
 
         Args:
             output_file: 输出文件名
@@ -34,76 +42,46 @@ class DataOrganizer:
         Returns:
             合并后的 DataFrame
         """
-        logger.info("开始合并数据...")
+        logger.info("从数据库导出合并数据...")
 
-        # 加载所有 TI.csv 文件
-        ti_files = [f for f in os.listdir(self.raw_dir) if f.endswith('_TI.csv')]
-        history_files = [f for f in os.listdir(self.raw_dir) if 'all_history' in f and f.endswith('.csv')]
+        # 从数据库查询所有数据
+        df = self.db.get_all_concept_data()
 
-        all_data = []
-
-        # 处理单板块文件
-        logger.info(f"发现 {len(ti_files)} 个单板块文件")
-        for f in ti_files:
-            try:
-                df = pd.read_csv(os.path.join(self.raw_dir, f))
-                if len(df) > 0:
-                    all_data.append(df)
-            except Exception as e:
-                logger.warning(f"加载失败：{f} - {e}")
-
-        # 处理合集文件
-        logger.info(f"发现 {len(history_files)} 个合集文件")
-        for f in history_files:
-            try:
-                df = pd.read_csv(os.path.join(self.raw_dir, f))
-                if len(df) > 0:
-                    all_data.append(df)
-            except Exception as e:
-                logger.warning(f"加载失败：{f} - {e}")
-
-        if not all_data:
-            logger.error("未找到任何数据")
+        if df.empty:
+            logger.warning("数据库中没有数据")
             return pd.DataFrame()
 
-        # 合并
-        merged = pd.concat(all_data, ignore_index=True)
-
-        # 去重
-        logger.info(f"合并后记录数：{len(merged):,}")
-        logger.info("执行去重...")
-        merged = merged.drop_duplicates(subset=['ts_code', 'trade_date'], keep='last')
+        # 去重（数据库已有唯一约束，这里作为额外保证）
+        df = df.drop_duplicates(subset=['ts_code', 'trade_date'], keep='last')
 
         # 按板块和日期排序
-        merged = merged.sort_values(['ts_code', 'trade_date'])
+        df = df.sort_values(['ts_code', 'trade_date'])
 
-        # 保存
+        # 保存 CSV
         output_path = os.path.join(self.processed_dir, output_file)
-        merged.to_csv(output_path, index=False)
+        df.to_csv(output_path, index=False)
 
         logger.info("=" * 60)
-        logger.info("数据合并完成")
-        logger.info(f"总记录数：{len(merged):,}")
-        logger.info(f"唯一下板块：{merged['ts_code'].nunique()}")
-        logger.info(f"日期范围：{merged['trade_date'].min()} - {merged['trade_date'].max()}")
+        logger.info("数据导出完成")
+        logger.info(f"总记录数：{len(df):,}")
+        logger.info(f"唯一下板块：{df['ts_code'].nunique()}")
+        logger.info(f"日期范围：{df['trade_date'].min()} - {df['trade_date'].max()}")
         logger.info(f"输出文件：{output_path}")
         logger.info("=" * 60)
 
-        return merged
+        return df
 
     def split_by_concept(self, data: pd.DataFrame = None):
         """
         按板块拆分数据
 
         Args:
-            data: 输入数据，如果为 None 则加载 merged 文件
+            data: 输入数据，如果为 None 则从数据库加载
         """
         if data is None:
-            merged_file = os.path.join(self.processed_dir, "merged_concept_data.csv")
-            if os.path.exists(merged_file):
-                data = pd.read_csv(merged_file)
-            else:
-                logger.error("未找到合并文件，请先执行 merge_all_data")
+            data = self.db.get_all_concept_data()
+            if data.empty:
+                logger.error("数据库中没有数据")
                 return
 
         logger.info("按板块拆分数据...")
@@ -124,46 +102,15 @@ class DataOrganizer:
 
     def remove_duplicates(self, check_column: str = 'trade_date'):
         """
-        对所有单文件去重
-
-        Args:
-            check_column: 用于检查重复的列
+        数据库已有唯一约束，此方法不再需要
+        去重操作由数据库在写入时自动完成
         """
-        logger.info("执行批量去重...")
-
-        ti_files = [f for f in os.listdir(self.raw_dir) if f.endswith('_TI.csv')]
-
-        total_removed = 0
-        files_processed = 0
-
-        for f in ti_files:
-            filepath = os.path.join(self.raw_dir, f)
-            try:
-                df = pd.read_csv(filepath)
-                original_count = len(df)
-
-                if check_column in df.columns:
-                    df_dedup = df.drop_duplicates(subset=[check_column], keep='last')
-                else:
-                    df_dedup = df
-
-                dedup_count = len(df_dedup)
-                removed = original_count - dedup_count
-
-                if removed > 0:
-                    df_dedup.to_csv(filepath, index=False)
-                    total_removed += removed
-                    files_processed += 1
-                    logger.debug(f"{f}: 移除 {removed} 条重复")
-
-            except Exception as e:
-                logger.warning(f"处理失败：{f} - {e}")
-
-        logger.info(f"去重完成：处理 {files_processed} 个文件，移除 {total_removed} 条重复记录")
+        logger.info("数据库已启用实时去重（唯一约束），无需手动去重")
+        logger.info("如需检查重复数据，可调用 verify_data_integrity()")
 
     def update_from_history(self, history_file: str = None):
         """
-        从合集文件更新单板块文件
+        从 CSV 合集文件导入数据到数据库（迁移工具）
 
         Args:
             history_file: 合集文件名，如果为 None 则自动查找最新的
@@ -186,44 +133,24 @@ class DataOrganizer:
         history_data = pd.read_csv(history_path)
         logger.info(f"合集记录数：{len(history_data):,}")
 
-        # 按板块分组保存
-        grouped = history_data.groupby('ts_code')
-        logger.info(f"共 {len(grouped)} 个板块")
+        # 批量导入到数据库
+        self.db.save_concept_daily_batch(history_data, replace=True)
 
-        updated_count = 0
-
-        for code, group in grouped:
-            filename = f"ths_{code}.csv"
-            filepath = os.path.join(self.raw_dir, filename)
-
-            # 如果单文件不存在或记录数少于合集，则更新
-            if not os.path.exists(filepath):
-                group.to_csv(filepath, index=False)
-                updated_count += 1
-            else:
-                existing = pd.read_csv(filepath)
-                if len(existing) < len(group) * 0.9:  # 单文件记录明显少于合集
-                    group.to_csv(filepath, index=False)
-                    updated_count += 1
-
-        logger.info(f"更新完成：更新/创建 {updated_count} 个文件")
+        logger.info(f"导入完成：{len(history_data):,} 条记录已写入数据库")
 
     def organize_directory(self):
         """
-        完整整理流程
+        完整整理流程（从数据库导出 CSV）
         """
         logger.info("=" * 60)
         logger.info("开始整理数据目录")
         logger.info("=" * 60)
 
-        # 1. 去重
-        self.remove_duplicates()
-
-        # 2. 从合集更新单文件
-        self.update_from_history()
-
-        # 3. 合并所有数据
+        # 从数据库导出合并数据
         self.merge_all_data()
+
+        # 按板块拆分
+        self.split_by_concept()
 
         logger.info("数据整理完成")
 

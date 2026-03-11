@@ -97,9 +97,9 @@ def main():
     parser = argparse.ArgumentParser(description="A 股热点轮动预测系统")
     parser.add_argument(
         "--mode",
-        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize", "storage"],
+        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize", "storage", "sync"],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理)"
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理), sync(同步数据)"
     )
     parser.add_argument(
         "--date",
@@ -115,6 +115,12 @@ def main():
         "--end-date",
         type=str,
         help="结束日期 YYYYMMDD (history 模式使用)"
+    )
+    parser.add_argument(
+        "--sector-type",
+        choices=["all", "concept", "industry", "region"],
+        default="all",
+        help="板块类型 (all/concept/industry/region) (fast 模式使用)"
     )
     parser.add_argument(
         "--train",
@@ -261,7 +267,7 @@ def main():
                 logger.error(f"预测失败：{result.get('error', '未知错误')}")
 
         elif args.mode == "data":
-            # 数据采集
+            # 数据采集 - 默认更新到最新数据
             from agents.data_agent import DataAgent
             data_agent = DataAgent()
 
@@ -269,8 +275,9 @@ def main():
                 logger.info(f"采集单日数据：{args.date}")
                 result = data_agent.execute(task="daily", start_date=args.date)
             else:
-                logger.info("采集基础数据")
-                result = data_agent.execute(task="basic")
+                # 默认更新到最新数据
+                logger.info("采集最新数据（自动判断日期）")
+                result = data_agent.execute(task="daily")
             print(f"数据采集结果：{result}")
 
         elif args.mode == "history":
@@ -418,8 +425,8 @@ def main():
             print("=" * 70 + "\n")
 
         elif args.mode == "fast":
-            # 高速并发采集
-            logger.info("执行高速并发采集")
+            # 高速并发采集（默认 8 线程，避免触发 API 限流）
+            logger.info("执行高速并发采集（8 线程，智能限流）")
             from data.fast_collector import HighSpeedDataCollector
 
             if not settings.tushare_token:
@@ -431,11 +438,18 @@ def main():
 
             collector = HighSpeedDataCollector(
                 token=settings.tushare_token,
-                max_workers=10
+                max_workers=8,   # 8 线程并发（避免触发 500 次/分钟限流）
+                api_limit=450    # API 每分钟限制 450 次（预留缓冲）
             )
 
-            # 下载所有概念板块历史数据
-            collector.download_all_history(start_date, end_date)
+            # 下载所有板块历史数据
+            # sector_type: all=全部板块，concept=概念板块，industry=行业板块，region=地区板块
+            collector.download_all_history(
+                start_date,
+                end_date,
+                concurrent=True,
+                sector_type=args.sector_type or "all"
+            )
 
         elif args.mode == "organize":
             # 数据整理
@@ -459,7 +473,7 @@ def main():
                 print("警告：此操作将删除所有单板块文件，只保留合并文件")
                 print("这将释放磁盘空间，但单个板块数据将需要从合并文件中读取")
                 print("\n合并文件位置：", manager.merged_file)
-                print("将删除的文件数：", len([f for f in os.listdir(settings.raw_data_dir) if f.endswith('_TI.csv')]))
+                print("将删除的文件数：", len([f for f in os.listdir(settings.raw_data_dir) if f.startswith('ths_') and ('.TI.csv' in f or f.endswith('_TI.csv'))]))
                 print("\n是否继续？(Y/n): ", end="")
                 # 非确认模式（脚本调用时自动确认）
                 if os.environ.get("AUTO_CONFIRM") == "1":
@@ -471,7 +485,6 @@ def main():
                 if confirm in ("y", ""):
                     deleted = manager.cleanup_raw_files(keep_history=False)
                     print(f"\n清理完成：删除 {deleted} 个文件")
-                    print(f"保留文件：ths_all_history_*.csv (如果存在)")
                 else:
                     print("已取消")
             else:
@@ -491,11 +504,33 @@ def main():
                 print("=" * 70)
 
                 # 统计原始文件
-                raw_files = [f for f in os.listdir(settings.raw_data_dir) if f.endswith('_TI.csv')]
+                raw_files = [f for f in os.listdir(settings.raw_data_dir) if f.startswith('ths_') and ('.TI.csv' in f or f.endswith('_TI.csv'))]
                 history_files = [f for f in os.listdir(settings.raw_data_dir) if 'all_history' in f]
                 print(f"\n原始目录：{len(raw_files)} 个单板块文件，{len(history_files)} 个合集文件")
                 print(f"合并文件：{manager.merged_file}")
                 print("=" * 70 + "\n")
+
+        elif args.mode == "sync":
+            # 数据同步 - 将 raw 目录零散数据同步到合并文件
+            logger.info("执行数据同步")
+            from data.storage_manager import StorageManager
+
+            manager = StorageManager()
+
+            print("\n" + "=" * 70)
+            print("数据同步")
+            print("=" * 70)
+
+            # 显示同步前状态
+            raw_files = [f for f in os.listdir(settings.raw_data_dir) if f.startswith('ths_') and ('.TI.csv' in f or f.endswith('_TI.csv'))]
+            history_files = [f for f in os.listdir(settings.raw_data_dir) if 'all_history' in f]
+            print(f"\n同步前：{len(raw_files)} 个单板块文件，{len(history_files)} 个合集文件")
+
+            # 执行同步
+            new_total, total = manager.sync_from_raw()
+
+            print(f"\n同步后：合并文件包含 {new_total:,} 条记录")
+            print("=" * 70 + "\n")
 
         elif args.mode == "backtest":
             # 回测验证

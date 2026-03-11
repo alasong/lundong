@@ -57,27 +57,35 @@ class PredictAgent(BaseAgent):
         data: Optional[Dict[str, pd.DataFrame]] = None,
         **kwargs
     ) -> Dict:
-        """训练模型"""
+        """训练模型（流式加载优化版）"""
         logger.info("开始训练模型...")
 
-        if data is None:
-            data = self._load_training_data()
+        # 使用流式加载训练数据
+        logger.info("从数据库流式加载训练数据...")
 
-        concept_data = data.get("concept")
-        if concept_data is None or concept_data.empty:
-            return {"success": False, "error": "无概念数据"}
+        try:
+            from data.database import get_database
+            db = get_database()
 
-        # 准备特征（使用 16 并发 - 压力测试最佳值）
-        features = self.predictor.prepare_features(concept_data, n_jobs=16)
-        logger.info(f"特征准备完成：{len(features)} 条样本")
+            # 分批次从数据库读取数据并处理
+            features = self._stream_prepare_features(db, n_jobs=32)
 
-        # 训练模型
-        self.model_result = self.predictor.train(features)
+            if features is None or features.empty:
+                return {"success": False, "error": "无概念数据"}
 
-        return {
-            "success": True,
-            "metrics": self.model_result["metrics"]
-        }
+            logger.info(f"特征准备完成：{len(features)} 条样本")
+
+            # 训练模型（使用所有 CPU 核心）
+            self.model_result = self.predictor.train(features, n_jobs=-1)
+
+            return {
+                "success": True,
+                "metrics": self.model_result["metrics"]
+            }
+
+        except Exception as e:
+            logger.error(f"训练失败：{e}")
+            return {"success": False, "error": str(e)}
 
     def _predict(
         self,
@@ -94,8 +102,8 @@ class PredictAgent(BaseAgent):
         if concept_data is None or concept_data.empty:
             return {"success": False, "error": "无概念数据"}
 
-        # 准备特征（使用 16 并发 - 压力测试最佳值）
-        features = self.predictor.prepare_features(concept_data, n_jobs=16)
+        # 准备特征（默认 32 线程高并发）
+        features = self.predictor.prepare_features(concept_data, n_jobs=32)
         if features.empty:
             logger.warning("特征为空，可能数据不足")
             # 返回简化预测（使用近期表现）
@@ -191,10 +199,36 @@ class PredictAgent(BaseAgent):
 
     def _load_training_data(self) -> Dict[str, pd.DataFrame]:
         """
-        加载训练数据（支持同花顺数据格式）- 优化版
-        使用并行读取和缓存加速
+        加载训练数据（支持同花顺数据格式）- 从数据库读取
         """
         data = {}
+
+        # 首先尝试从数据库读取
+        try:
+            from data.database import get_database
+            db = get_database()
+
+            # 从数据库加载概念数据
+            df = db.get_all_concept_data()
+
+            if not df.empty:
+                # 重命名字段以匹配系统期望的格式
+                if 'pct_change' in df.columns:
+                    df = df.rename(columns={'pct_change': 'pct_chg'})
+                if 'ts_code' in df.columns:
+                    df = df.rename(columns={'ts_code': 'concept_code'})
+
+                # 添加 name 字段（如果不存在）
+                if 'name' not in df.columns:
+                    df['name'] = df['concept_code']
+
+                data["concept"] = df
+                logger.info(f"从数据库加载训练数据：{len(df):,} 条记录")
+                return data
+        except Exception as e:
+            logger.warning(f"从数据库加载数据失败：{e}")
+
+        # 回退到文件读取
         raw_dir = settings.raw_data_dir
 
         if not os.path.exists(raw_dir):
@@ -328,6 +362,102 @@ class PredictAgent(BaseAgent):
                 logger.info(f"加载了 {len(ths_files)} 个同花顺数据文件用于预测，共 {len(data['concept'])} 条记录")
 
         return data
+
+    def _stream_prepare_features(
+        self,
+        db,
+        lookback: int = 10,
+        n_jobs: int = 32,
+        batch_size: int = 50
+    ) -> Optional[pd.DataFrame]:
+        """
+        流式准备特征（分批加载，边加载边处理）
+
+        Args:
+            db: 数据库实例
+            lookback: 回溯天数
+            n_jobs: 并行任务数
+            batch_size: 每批次处理的板块数
+
+        Returns:
+            特征 DataFrame
+        """
+        import pandas as pd
+        from joblib import Parallel, delayed
+        import time
+
+        logger.info("开始流式准备特征...")
+        start_time = time.time()
+
+        # 获取所有板块代码
+        result = db.query("SELECT DISTINCT ts_code FROM concept_daily")
+        all_codes = [r[0] for r in result]
+        total_codes = len(all_codes)
+        logger.info(f"共 {total_codes} 个板块")
+
+        all_features = []
+        processed = 0
+
+        # 分批处理
+        for i in range(0, total_codes, batch_size):
+            batch_codes = all_codes[i:i + batch_size]
+
+            # 获取本批次数据
+            placeholders = ','.join(['?' for _ in batch_codes])
+            sql = f"SELECT * FROM concept_daily WHERE ts_code IN ({placeholders}) ORDER BY ts_code, trade_date"
+            df = db.query_to_dataframe(sql, tuple(batch_codes))
+
+            if df.empty:
+                continue
+
+            # 重命名列以匹配处理器的期望
+            df = df.rename(columns={
+                'ts_code': 'concept_code',
+                'pct_change': 'pct_chg'
+            })
+
+            # 处理本批次
+            grouped = df.groupby("concept_code")
+            concept_codes = list(grouped.groups.keys())
+
+            # 动态调整并发数
+            actual_jobs = min(n_jobs, len(concept_codes))
+            if actual_jobs <= 0:
+                actual_jobs = 1
+
+            # 并行处理本批次
+            results = Parallel(
+                n_jobs=actual_jobs,
+                backend="threading",
+                verbose=0
+            )(
+                delayed(self.predictor._process_single_concept_vectorized)(
+                    name,
+                    grouped.get_group(name).rename(columns={'ts_code': 'concept_code'}),
+                    lookback
+                )
+                for name in concept_codes
+            )
+
+            batch_features = [r for r in results if r is not None]
+            if batch_features:
+                all_features.append(pd.concat(batch_features, ignore_index=True))
+
+            processed += len(batch_codes)
+            if processed % 100 == 0 or processed >= total_codes:
+                elapsed = time.time() - start_time
+                logger.info(f"进度：{processed}/{total_codes} ({processed*100/total_codes:.1f}%), "
+                           f"已生成 {sum(len(f) for f in all_features):,} 条样本，耗时 {elapsed:.1f}s")
+
+        if not all_features:
+            logger.warning("未能生成任何特征数据")
+            return None
+
+        result_df = pd.concat(all_features, ignore_index=True)
+        total_elapsed = time.time() - start_time
+        logger.info(f"流式特征准备完成：{len(result_df):,} 条样本，耗时 {total_elapsed:.1f}s")
+
+        return result_df
 
 
 def main():

@@ -98,17 +98,82 @@ class DataAgent(BaseAgent):
 
     def _collect_daily(self, trade_date: Optional[str] = None) -> Dict:
         """采集每日数据"""
+        # 默认获取最新数据（自动判断日期）
         if trade_date is None:
-            trade_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+            from data.storage_manager import StorageManager
+            manager = StorageManager()
+            latest = manager.get_latest_date()
 
-        logger.info(f"开始采集每日数据：{trade_date}")
+            if latest:
+                # 从最新日期的下一个交易日开始
+                latest_dt = datetime.strptime(latest, "%Y%m%d")
+                start_date = (latest_dt + timedelta(days=1)).strftime("%Y%m%d")
+                logger.info(f"检测到最新数据为 {latest}，将从 {start_date} 开始更新")
+            else:
+                # 没有历史数据，从 30 天前开始
+                start_date = (datetime.now() - timedelta(days=30)).strftime("%Y%m%d")
+                logger.info(f"未检测到历史数据，从 {start_date} 开始采集")
+
+            # 更新到昨天
+            trade_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+            logger.info(f"目标日期：{trade_date}")
+        else:
+            start_date = trade_date
+
         results = {"trade_date": trade_date}
 
-        # 这里可以添加每日数据采集逻辑
-        # 目前主要采集列表数据
+        # 采集列表数据
+        list_results = self._collect_lists()
+        results.update(list_results)
+
+        # 使用高速采集器更新数据
+        logger.info(f"开始更新数据：{start_date} - {trade_date}")
+        try:
+            from data.fast_collector import HighSpeedDataCollector
+            from core.settings import settings as core_settings
+
+            collector = HighSpeedDataCollector(
+                token=core_settings.tushare_token,
+                max_workers=10
+            )
+
+            # 获取板块列表
+            indices = collector.client.get_ths_indices()
+            codes = indices['ts_code'].tolist()
+
+            # 批量下载（直接写入数据库）
+            collector.download_batch(codes, start_date, trade_date)
+
+            results["status"] = "success"
+            results["downloaded"] = collector.downloaded_count
+            results["skipped"] = collector.skipped_count
+            results["failed"] = collector.failed_count
+
+            # 自动触发数据导出
+            logger.info("正在导出数据库数据到 CSV...")
+            self._organize_data()
+
+        except Exception as e:
+            logger.error(f"更新失败：{e}")
+            results["status"] = "error"
+            results["error"] = str(e)
 
         logger.info(f"每日数据采集完成：{results}")
         return results
+
+    def _organize_data(self):
+        """导出数据（从数据库导出 CSV）"""
+        from data.data_organizer import DataOrganizer
+
+        organizer = DataOrganizer()
+
+        # 从数据库导出合并数据
+        merged = organizer.merge_all_data()
+
+        if len(merged) > 0:
+            logger.info(f"数据导出完成：{len(merged):,} 条记录")
+        else:
+            logger.warning("数据导出后为空")
 
     def _collect_history(
         self,
