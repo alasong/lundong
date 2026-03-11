@@ -88,8 +88,11 @@ python src/main.py --mode data
 # 采集历史数据（指定日期范围）
 python src/main.py --mode history --start-date 20230101 --end-date 20241231
 
-# 采集单日数据
-python src/main.py --mode data --date 20241231
+# 高速并发采集（推荐）
+python src/main.py --mode fast --start-date 20200101 --end-date 20251231
+
+# 数据整理（合并 + 去重 + 更新）
+python src/main.py --mode organize
 ```
 
 ### 模型训练
@@ -141,6 +144,8 @@ CV_SPLITS=5 CV_TRAIN_MONTHS=24 CV_PURGE=5 CV_EMBARGO=2 \
 |------|------|------|------|
 | `list` | **查看已采集的数据** | `--mode list` | 无 |
 | `dedup` | **数据去重** | `--mode dedup` | 无 |
+| `fast` | **高速并发采集** | `--mode fast` | TUSHARE_TOKEN |
+| `organize` | **数据整理** | `--mode organize` | 无 |
 | `data` | 采集基础数据 | `--mode data` | TUSHARE_TOKEN |
 | `history` | 采集历史数据 | `--mode history --start-date X --end-date Y` | TUSHARE_TOKEN |
 | `train` | 训练模型 | `--mode train` | 历史数据 |
