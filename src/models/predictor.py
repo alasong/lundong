@@ -60,15 +60,15 @@ class UnifiedPredictor:
 
         if use_parallel:
             from joblib import Parallel, delayed
-            # 动态调整并发数，避免过度并发
+            # CPU 密集型任务使用 multiprocessing backend
             actual_jobs = min(n_jobs, len(concept_codes))
             if actual_jobs <= 0:
                 actual_jobs = 1
 
-            logger.debug(f"使用 {actual_jobs} 个并行任务")
+            logger.debug(f"使用 {actual_jobs} 个并行任务 (multiprocessing)")
             results = Parallel(
                 n_jobs=actual_jobs,
-                backend="threading",
+                backend="multiprocessing",
                 verbose=0
             )(
                 delayed(self._process_single_concept_vectorized)(name, grouped.get_group(name), lookback)
@@ -511,16 +511,18 @@ class UnifiedPredictor:
         model_result: Optional[Dict],
         features: pd.DataFrame,
         batch_size: int = 10000,
-        with_confidence: bool = True
+        with_confidence: bool = True,
+        n_jobs: int = 32
     ) -> pd.DataFrame:
         """
-        批量预测（高性能版本，支持置信度评估）
+        批量预测（高性能并行版本，支持置信度评估）
 
         Args:
             model_result: 训练结果（包含 models 和 feature_cols）
             features: 特征数据
             batch_size: 批处理大小
             with_confidence: 是否计算预测置信度
+            n_jobs: 并行任务数（默认 32）
 
         Returns:
             预测结果 DataFrame
@@ -548,27 +550,39 @@ class UnifiedPredictor:
 
         X = features[feature_cols].values
 
-        # 批量预测
+        # 批量预测（32 并发优化）
         n_samples = len(X)
         num_batches = (n_samples + batch_size - 1) // batch_size
 
-        logger.debug(f"开始批量预测：{n_samples} 样本，{num_batches} 批次")
+        logger.debug(f"开始批量预测：{n_samples} 样本，{num_batches} 批次，{n_jobs} 并发")
 
-        # 存储预测结果
-        pred_1d_list = []
-        pred_5d_list = []
-        pred_20d_list = []
-
+        # 创建批次列表
+        batches = []
         for i in range(num_batches):
             start_idx = i * batch_size
             end_idx = min((i + 1) * batch_size, n_samples)
-            X_batch = X[start_idx:end_idx]
+            batches.append(X[start_idx:end_idx])
 
-            pred_1d_list.append(models["1d"].predict(X_batch))
-            pred_5d_list.append(models["5d"].predict(X_batch))
-            pred_20d_list.append(models["20d"].predict(X_batch))
+        # 32 并发预测（使用 threading backend，适合轻量级预测）
+        from joblib import Parallel, delayed
+
+        def predict_batch(X_batch):
+            return (
+                models["1d"].predict(X_batch),
+                models["5d"].predict(X_batch),
+                models["20d"].predict(X_batch)
+            )
+
+        results = Parallel(
+            n_jobs=n_jobs,
+            backend="threading",
+            verbose=0
+        )(
+            delayed(predict_batch)(batch) for batch in batches
+        )
 
         # 合并结果
+        pred_1d_list, pred_5d_list, pred_20d_list = zip(*results)
         pred_1d = np.concatenate(pred_1d_list)
         pred_5d = np.concatenate(pred_5d_list)
         pred_20d = np.concatenate(pred_20d_list)

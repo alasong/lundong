@@ -109,8 +109,8 @@ class PredictAgent(BaseAgent):
             # 返回简化预测（使用近期表现）
             return self._simple_prediction(concept_data)
 
-        # 预测（带置信度评估）
-        predictions = self.predictor.predict(self.model_result, features, with_confidence=True)
+        # 预测（32 并发，带置信度评估）
+        predictions = self.predictor.predict(self.model_result, features, with_confidence=True, n_jobs=32)
 
         if predictions.empty:
             return {"success": False, "error": "预测失败"}
