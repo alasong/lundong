@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Git Pre-commit Hook
+提交前检查：
+1. 检查是否有 pytest 测试
+2. 检查代码基本规范
+3. 检查敏感信息泄露
+"""
+import subprocess
+import sys
+import re
+import os
+
+
+def run_command(cmd: list) -> tuple:
+    """运行命令并返回结果"""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        return result.returncode, result.stdout, result.stderr
+    except Exception as e:
+        return 1, "", str(e)
+
+
+def get_staged_files():
+    """获取暂存的文件列表"""
+    code, stdout, _ = run_command(["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"])
+    if code != 0:
+        return []
+    return [f.strip() for f in stdout.split('\n') if f.strip()]
+
+
+def check_python_syntax(files: list) -> bool:
+    """检查 Python 语法"""
+    python_files = [f for f in files if f.endswith('.py')]
+    if not python_files:
+        return True
+
+    print("检查 Python 语法...")
+    errors = []
+    for f in python_files:
+        if os.path.exists(f):
+            code, _, stderr = run_command([sys.executable, "-m", "py_compile", f])
+            if code != 0:
+                errors.append(f"{f}: 语法错误 - {stderr}")
+
+    if errors:
+        print("❌ Python 语法检查失败:")
+        for e in errors:
+            print(f"  {e}")
+        return False
+
+    print("✓ Python 语法检查通过")
+    return True
+
+
+def check_sensitive_data(files: list) -> bool:
+    """检查敏感数据"""
+    print("检查敏感信息...")
+
+    sensitive_patterns = [
+        (r'AKIA[0-9A-Z]{16}', 'AWS Access Key'),
+        (r'ghp_[a-zA-Z0-9]{36}', 'GitHub PAT'),
+        (r'sk-[a-zA-Z0-9]{48}', 'OpenAI API Key'),
+        (r'-----BEGIN (RSA |DSA |EC )?PRIVATE KEY-----', 'Private Key'),
+        (r'password\s*=\s*["\'][^"\']+["\']', 'Hardcoded Password'),
+        (r'secret\s*=\s*["\'][^"\']+["\']', 'Hardcoded Secret'),
+    ]
+
+    errors = []
+    for f in files:
+        if f.endswith('.py') and os.path.exists(f):
+            try:
+                with open(f, 'r', encoding='utf-8') as fp:
+                    content = fp.read()
+                    for pattern, desc in sensitive_patterns:
+                        if re.search(pattern, content, re.IGNORECASE):
+                            # 排除示例文件和配置文件
+                            if 'example' not in f.lower() and 'sample' not in f.lower():
+                                if not f.endswith('.env') and 'config' not in f.lower():
+                                    errors.append(f"{f}: 可能包含{desc}")
+            except Exception:
+                pass
+
+    if errors:
+        print("❌ 敏感信息检查失败:")
+        for e in errors:
+            print(f"  {e}")
+        print("\n提示：请确保敏感信息放在.env 文件中并添加到.gitignore")
+        return False
+
+    print("✓ 敏感信息检查通过")
+    return True
+
+
+def check_test_coverage(files: list) -> bool:
+    """检查是否有对应的测试文件（仅针对主要模块）"""
+    print("检查测试覆盖...")
+
+    # 只检查主要模块
+    major_modules = {
+        'src/models/predictor.py': 'tests/test_prediction.py',
+        'src/agents/predict_agent.py': 'tests/test_prediction.py',
+        'src/agents/analysis_agent.py': 'tests/test_analysis.py',
+        'src/agents/data_agent.py': 'tests/test_data_collection.py',
+        'src/analysis/hotspot_detector.py': 'tests/test_analysis.py',
+        'src/analysis/rotation_analyzer.py': 'tests/test_analysis.py',
+    }
+
+    warnings = []
+    for module, test_file in major_modules.items():
+        if module in files:
+            if not os.path.exists(test_file):
+                warnings.append(f"模块 {module} 缺少测试文件 {test_file}")
+
+    if warnings:
+        print("⚠ 测试覆盖警告:")
+        for w in warnings:
+            print(f"  {w}")
+        print("  (警告不会阻止提交，但建议添加测试)")
+
+    print("✓ 测试覆盖检查完成")
+    return True
+
+
+def check_import_order(files: list) -> bool:
+    """检查导入顺序（基础规范）"""
+    print("检查导入规范...")
+
+    # 检查是否有 src 路径插入在错误位置
+    for f in files:
+        if f.endswith('.py') and os.path.exists(f):
+            try:
+                with open(f, 'r', encoding='utf-8') as fp:
+                    content = fp.read()
+                    # 检查 sys.path.insert 是否在文件开头
+                    if 'sys.path.insert' in content:
+                        lines = content.split('\n')
+                        for i, line in enumerate(lines[:20], 1):
+                            if 'sys.path.insert' in line:
+                                if i > 15:  # 应该在前 15 行内
+                                    print(f"⚠ {f}: sys.path.insert 建议放在文件前 15 行内（当前第{i}行）")
+            except Exception:
+                pass
+
+    print("✓ 导入规范检查完成")
+    return True
+
+
+def run_tests():
+    """运行相关测试"""
+    print("\n运行单元测试...")
+
+    # 尝试使用虚拟环境中的 pytest
+    # hook 在 .git/hooks/ 目录，所以 project_root 是 .git 的父目录
+    git_dir = os.path.dirname(os.path.abspath(__file__))  # .git/hooks
+    project_root = os.path.dirname(os.path.dirname(git_dir))  # project root
+    print(f"Project root: {project_root}")
+    venv_pytest = os.path.join(project_root, '.venv', 'bin', 'pytest')
+    print(f"Looking for pytest at: {venv_pytest}")
+    print(f"Pytest exists: {os.path.exists(venv_pytest)}")
+
+    if os.path.exists(venv_pytest):
+        cmd = [venv_pytest, "tests/", "-x", "-q", "--tb=short"]
+        print(f"使用虚拟环境 pytest：{venv_pytest}")
+    else:
+        # fallback 到系统 pytest
+        print("未找到虚拟环境，使用系统 pytest")
+        cmd = ["python", "-m", "pytest", "tests/", "-x", "-q", "--tb=short"]
+
+    code, stdout, stderr = run_command(cmd)
+
+    if code != 0:
+        print("❌ 测试失败:")
+        print(stdout)
+        print(stderr)
+        return False
+
+    # 统计测试结果
+    if "passed" in stdout:
+        print("✓ 测试通过:", [line for line in stdout.split('\n') if 'passed' in line][0])
+    return True
+
+
+def main():
+    """主函数"""
+    print("=" * 60)
+    print("Git Pre-commit 检查")
+    print("=" * 60)
+
+    # 获取暂存文件
+    staged_files = get_staged_files()
+    if not staged_files:
+        print("没有暂存的文件")
+        sys.exit(0)
+
+    print(f"检测到 {len(staged_files)} 个暂存文件")
+
+    # 执行检查
+    checks = [
+        ("Python 语法", lambda: check_python_syntax(staged_files)),
+        ("敏感信息", lambda: check_sensitive_data(staged_files)),
+        ("导入规范", lambda: check_import_order(staged_files)),
+    ]
+
+    all_passed = True
+    for name, check_func in checks:
+        if not check_func():
+            all_passed = False
+            print(f"\n❌ {name} 检查失败，请修复后重新提交\n")
+
+    # 测试覆盖检查（仅警告）
+    check_test_coverage(staged_files)
+
+    # 运行测试
+    print("\n" + "=" * 60)
+    if not run_tests():
+        print("\n❌ 测试失败，请修复后重新提交\n")
+        all_passed = False
+
+    print("=" * 60)
+    if all_passed:
+        print("✓ 所有检查通过，允许提交")
+        sys.exit(0)
+    else:
+        print("❌ 检查未通过，提交被阻止")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

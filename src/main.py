@@ -98,7 +98,67 @@ def main():
             # 仅预测（使用已有模型）
             logger.info("执行预测（使用已有模型）")
             result = runner.predict_agent.execute(task="predict", horizon="all")
-            print(f"预测结果：{result}")
+
+            # 格式化输出预测结果
+            # execute 返回：{"success": True, "agent": "...", "result": {"success": True, "result": {...}}}
+            if result.get("success") and result.get("result"):
+                # 第一层 result 是 execute 包装的，里面的 result 是_predict 返回的
+                prediction_result = result["result"].get("result", {})
+
+                if isinstance(prediction_result, dict):
+                    top_predictions = prediction_result.get("top_10", [])
+                else:
+                    top_predictions = []
+
+                print("\n" + "=" * 70)
+                print("A 股热点轮动预测结果")
+                print("=" * 70)
+
+                if top_predictions:
+                    print("\n【预测 TOP10】")
+                    print("-" * 70)
+                    print(f"{'排名':<6}{'板块名称':<20}{'综合得分':<12}{'1 日':<10}{'5 日':<10}{'20 日':<10}")
+                    print("-" * 70)
+                    for i, pred in enumerate(top_predictions, 1):
+                        name = pred.get('concept_name', pred.get('name', pred.get('concept_code', 'N/A')))
+                        # 如果名称等于 code，说明没有正确加载名称
+                        if name == pred.get('concept_code'):
+                            name = f"{name} (名称未知)"
+                        combined = pred.get('combined_score', 0)
+                        p1d = pred.get('pred_1d', 0)
+                        p5d = pred.get('pred_5d', 0)
+                        p20d = pred.get('pred_20d', 0)
+
+                        # 标记
+                        if i <= 3:
+                            marker = "⭐"
+                        elif i <= 6:
+                            marker = "📈"
+                        else:
+                            marker = "📊"
+
+                        print(f"{i:<6}{name:<20}{combined:<12.2f}{p1d:<10.2f}{p5d:<10.2f}{p20d:<10.2f} {marker}")
+                    print("-" * 70)
+
+                    # 策略建议
+                    print("\n【轮动策略】")
+                    top3_names = [p.get('concept_name', p.get('name', p.get('concept_code', 'N/A'))) for p in top_predictions[:3]]
+                    print(f"重点关注：{', '.join(top3_names)}")
+
+                    avg_score = sum(p.get('combined_score', 0) for p in top_predictions[:3]) / 3
+                    if avg_score > 5:
+                        print("市场判断：多头行情，建议积极介入")
+                    elif avg_score > 0:
+                        print("市场判断：震荡行情，建议逢低布局")
+                    else:
+                        print("市场判断：空头行情，建议控制仓位")
+                else:
+                    print("暂无预测数据，可能需要先训练模型")
+                    print("运行：python src/main.py --mode train")
+
+                print("=" * 70 + "\n")
+            else:
+                logger.error(f"预测失败：{result.get('error', '未知错误')}")
 
         elif args.mode == "data":
             # 数据采集

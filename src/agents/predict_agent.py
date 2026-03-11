@@ -65,8 +65,8 @@ class PredictAgent(BaseAgent):
         if concept_data is None or concept_data.empty:
             return {"success": False, "error": "无概念数据"}
 
-        # 准备特征（使用 32 并发）
-        features = self.predictor.prepare_features(concept_data, n_jobs=32)
+        # 准备特征（使用 16 并发 - 压力测试最佳值）
+        features = self.predictor.prepare_features(concept_data, n_jobs=16)
         logger.info(f"特征准备完成：{len(features)} 条样本")
 
         # 训练模型
@@ -92,8 +92,8 @@ class PredictAgent(BaseAgent):
         if concept_data is None or concept_data.empty:
             return {"success": False, "error": "无概念数据"}
 
-        # 准备特征（使用 32 并发）
-        features = self.predictor.prepare_features(concept_data, n_jobs=32)
+        # 准备特征（使用 16 并发 - 压力测试最佳值）
+        features = self.predictor.prepare_features(concept_data, n_jobs=16)
         if features.empty:
             logger.warning("特征为空，可能数据不足")
             # 返回简化预测（使用近期表现）
@@ -208,9 +208,22 @@ class PredictAgent(BaseAgent):
                         df = df.rename(columns={'pct_change': 'pct_chg'})
                     if 'ts_code' in df.columns:
                         df = df.rename(columns={'ts_code': 'concept_code'})
-                    # 添加 name 字段
+
+                    # 处理 name 字段 - 从文件名提取或使用 code
+                    filename = os.path.basename(filepath)
                     if 'name' not in df.columns:
-                        df['name'] = df['concept_code']
+                        # 尝试从文件名提取：ths_881101_TI.csv -> 881101
+                        if filename.startswith('ths_') and '_TI.csv' in filename:
+                            code_part = filename.replace('ths_', '').replace('_TI.csv', '')
+                            df['name'] = f"板块_{code_part}"
+                        else:
+                            df['name'] = df['concept_code']
+                    elif df['name'].iloc[0] == df['concept_code'].iloc[0]:
+                        # 如果 name 等于 code，尝试从文件名获取更好的名称
+                        if filename.startswith('ths_') and '_TI.csv' in filename:
+                            code_part = filename.replace('ths_', '').replace('_TI.csv', '')
+                            df['name'] = f"板块_{code_part}"
+
                     return df
                 except Exception as e:
                     logger.warning(f"加载文件 {filepath} 失败：{e}")
@@ -229,13 +242,13 @@ class PredictAgent(BaseAgent):
 
         return data
 
-    def _load_latest_data(self, recent_days: int = 30) -> Dict[str, pd.DataFrame]:
+    def _load_latest_data(self, recent_days: int = 60) -> Dict[str, pd.DataFrame]:
         """
         加载最新数据（支持同花顺数据格式）- 优化版
         使用并行读取加速
 
         Args:
-            recent_days: 加载最近 N 天的数据
+            recent_days: 加载最近 N 天的数据（默认 60 天，确保有足够数据用于特征计算）
         """
         data = {}
         raw_dir = settings.raw_data_dir
@@ -263,8 +276,22 @@ class PredictAgent(BaseAgent):
                         df = df.rename(columns={'pct_change': 'pct_chg'})
                     if 'ts_code' in df.columns:
                         df = df.rename(columns={'ts_code': 'concept_code'})
+
+                    # 处理 name 字段 - 从文件名提取或使用 code
+                    filename = os.path.basename(filepath)
                     if 'name' not in df.columns:
-                        df['name'] = df['concept_code']
+                        # 尝试从文件名提取：ths_881101_TI.csv -> 881101
+                        if filename.startswith('ths_') and '_TI.csv' in filename:
+                            code_part = filename.replace('ths_', '').replace('_TI.csv', '')
+                            df['name'] = f"板块_{code_part}"
+                        else:
+                            df['name'] = df['concept_code']
+                    elif df['name'].iloc[0] == df['concept_code'].iloc[0]:
+                        # 如果 name 等于 code，尝试从文件名获取更好的名称
+                        if filename.startswith('ths_') and '_TI.csv' in filename:
+                            code_part = filename.replace('ths_', '').replace('_TI.csv', '')
+                            df['name'] = f"板块_{code_part}"
+
                     return df
                 except Exception as e:
                     logger.warning(f"加载文件 {filepath} 失败：{e}")
@@ -285,7 +312,8 @@ class PredictAgent(BaseAgent):
                     latest_date = data["concept"]["trade_date"].max()
                     try:
                         latest_date_int = int(latest_date)
-                        min_date = latest_date_int - 10000  # 大约 30 个交易日
+                        # 计算起始日期（考虑 recent_days 个交易日）
+                        min_date = latest_date_int - (recent_days * 100)  # 大约 recent_days 个交易日
                         data["concept"] = data["concept"][data["concept"]["trade_date"] >= min_date]
                     except:
                         pass

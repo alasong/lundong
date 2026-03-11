@@ -170,7 +170,7 @@ class TestUnifiedPredictor:
             "vol": np.random.randint(1000, 5000, 50),
         })
 
-        result = predictor._process_single_concept("A", concept_df, lookback=10)
+        result = predictor._process_single_concept_vectorized("A", concept_df, lookback=10)
 
         assert isinstance(result, pd.DataFrame)
         assert not result.empty
