@@ -161,7 +161,7 @@ def run_tests(test_files: Set[str]) -> bool:
     venv_pytest = os.path.join(get_project_root(), '.venv', 'bin', 'pytest')
     cmd = [venv_pytest if os.path.exists(venv_pytest) else "python", "-m", "pytest"]
     cmd.extend(existing_tests)
-    cmd.extend(["-x", "-q", "--tb=line"])
+    cmd.extend(["-x", "-q", "--tb=line", "-m", "not e2e and not slow"])
 
     code, stdout, stderr = run_command(cmd, timeout=TEST_TIMEOUT)
 

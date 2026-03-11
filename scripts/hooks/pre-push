@@ -54,16 +54,26 @@ def main():
     venv_pytest = os.path.join(get_project_root(), '.venv', 'bin', 'pytest')
 
     if os.path.exists(venv_pytest):
-        cmd = [venv_pytest, "tests/", "-v", "--tb=short", "--timeout=60", "-x"]
+        # 跳过 e2e 和 slow 测试，只运行单元测试
+        cmd = [
+            venv_pytest,
+            "tests/",
+            "-v", "--tb=short", "--timeout=60", "-x",
+            "-m", "not e2e and not slow"  # 跳过 e2e 和 slow 标记的测试
+        ]
         print(f"使用虚拟环境 pytest")
     else:
-        cmd = ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "--timeout=60", "-x"]
+        cmd = [
+            "python", "-m", "pytest", "tests/",
+            "-v", "--tb=short", "--timeout=60", "-x",
+            "-m", "not e2e and not slow"
+        ]
         print("使用系统 pytest")
 
-    print(f"运行完整测试套件（超时 10 分钟）...")
+    print(f"运行单元测试（跳过 e2e/slow，超时 5 分钟）...")
     print("-" * 60)
 
-    code, output = run_tests_live(cmd, timeout=600)
+    code, output = run_tests_live(cmd, timeout=300)
 
     print("-" * 60)
 

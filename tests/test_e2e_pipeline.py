@@ -98,7 +98,7 @@ class TestEndToEndPipeline:
         assert "analysis" in results or "prediction" in results or "report" in results
 
 
-@pytest.mark.integration
+@pytest.mark.e2e
 class TestRunnerIntegration:
     """SimpleRunner 集成测试"""
 

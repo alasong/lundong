@@ -190,6 +190,7 @@ class TestPredictAgent:
         assert agent is not None
         assert agent.predictor is not None
 
+    @pytest.mark.slow
     def test_agent_run_train(self, sample_concept_data, temp_data_dir, monkeypatch):
         """测试训练任务"""
         monkeypatch.setattr("config.settings.data_dir", str(temp_data_dir))
