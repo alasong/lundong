@@ -63,11 +63,25 @@ ts_code,trade_date,open,high,low,close,pre_close,avg_price,change,pct_change,vol
 
 ```
 data/
-├── raw/          # 原始 CSV 数据
-├── models/       # 训练好的模型
-├── patterns/     # 学习的规律（JSON）
-└── results/      # 分析结果
+├── raw/                      # 原始 CSV 数据（采集的原始文件）
+│   ├── ths_all_history_*.csv # 历史合集文件（建议保留）
+│   ├── ths_indices.csv       # 板块列表
+│   └── ths_name_mapping.csv  # 名称映射
+│
+├── processed/                # 处理后数据
+│   └── merged_concept_data.csv  # 合并去重后的完整数据（主要数据源）
+│
+├── models/                   # 训练好的模型
+├── patterns/                 # 学习的规律（JSON）
+└── results/                  # 分析结果
 ```
+
+**存储优化说明**：
+- `merged_concept_data.csv` 是合并去重后的完整数据，作为主要数据源
+- 单板块文件 (`ths_*_TI.csv`) 与合集文件数据大量重复（约 52% 重复率）
+- 可运行 `--mode storage --storage-action=cleanup` 清理冗余单文件，释放磁盘空间
+- 清理后数据统一从 `merged_concept_data.csv` 读取，不影响训练和预测
+- **清理效果**：488 个单文件 (144M) → 只保留合并文件 (49M)，节省约 66% 空间
 
 ---
 
@@ -134,6 +148,10 @@ python src/main.py --mode cv --start-date 20230101 --end-date 20241231
 # 自定义 CV 参数
 CV_SPLITS=5 CV_TRAIN_MONTHS=24 CV_PURGE=5 CV_EMBARGO=2 \
   python src/main.py --mode cv --start-date 20230101 --end-date 20241231
+
+# 存储管理（验证/清理）
+python src/main.py --mode storage                    # 验证存储状态
+python src/main.py --mode storage --storage-action=cleanup   # 清理冗余文件
 ```
 
 ---
@@ -146,6 +164,7 @@ CV_SPLITS=5 CV_TRAIN_MONTHS=24 CV_PURGE=5 CV_EMBARGO=2 \
 | `dedup` | **数据去重** | `--mode dedup` | 无 |
 | `fast` | **高速并发采集** | `--mode fast` | TUSHARE_TOKEN |
 | `organize` | **数据整理** | `--mode organize` | 无 |
+| `storage` | **存储管理** | `--mode storage` | 无 |
 | `data` | 采集基础数据 | `--mode data` | TUSHARE_TOKEN |
 | `history` | 采集历史数据 | `--mode history --start-date X --end-date Y` | TUSHARE_TOKEN |
 | `train` | 训练模型 | `--mode train` | 历史数据 |

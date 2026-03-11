@@ -97,9 +97,9 @@ def main():
     parser = argparse.ArgumentParser(description="A 股热点轮动预测系统")
     parser.add_argument(
         "--mode",
-        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize"],
+        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize", "storage"],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理)"
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理)"
     )
     parser.add_argument(
         "--date",
@@ -120,6 +120,12 @@ def main():
         "--train",
         action="store_true",
         help="是否训练模型"
+    )
+    parser.add_argument(
+        "--storage-action",
+        choices=["verify", "cleanup", "stats"],
+        default="verify",
+        help="存储管理操作类型 (storage 模式使用)"
     )
 
     args = parser.parse_args()
@@ -293,86 +299,68 @@ def main():
             # 查看已采集的数据
             logger.info("查看已采集的数据")
             from data.name_mapper import load_name_mapping, get_block_name
-            raw_dir = settings.raw_data_dir
+            from data.storage_manager import StorageManager
+            import pandas as pd_local
 
-            if not os.path.exists(raw_dir):
-                logger.warning("数据目录不存在")
-                return
-
-            # 统计文件
-            ths_files = [f for f in os.listdir(raw_dir) if f.endswith("_TI.csv")]
-            other_files = [f for f in os.listdir(raw_dir) if f.endswith(".csv") and not f.endswith("_TI.csv")]
+            # 优先从合并文件读取
+            manager = StorageManager()
+            df = manager.load_merged_data()
 
             print("\n" + "=" * 70)
             print("已采集的数据概览")
             print("=" * 70)
 
-            # 同花顺数据
-            if ths_files:
-                print(f"\n【同花顺板块数据】{len(ths_files)} 个文件")
+            if not df.empty:
+                # 从合并文件统计
+                print(f"\n【合并数据】{manager.merged_file}")
                 print("-" * 70)
+                print(f"总记录数：{len(df):,}")
+                print(f"板块数量：{df['ts_code'].nunique()}")
+                print(f"日期范围：{df['trade_date'].min()} - {df['trade_date'].max()}")
+                print("-" * 70)
+
+                # 显示各板块统计
+                print("\n【板块详情】（按代码排序）")
+                print("-" * 90)
                 print(f"{'代码':<15}{'板块名称':<25}{'记录数':<12}{'日期范围':<30}")
-                print("-" * 70)
+                print("-" * 90)
 
-                # 加载名称映射
                 name_mapping = load_name_mapping()
+                grouped = df.groupby('ts_code')
 
-                # 统计每个文件
-                file_stats = []
-                import pandas as pd_local
-                for filepath in sorted(ths_files)[:50]:  # 只显示前 50 个
-                    try:
-                        df = pd_local.read_csv(os.path.join(raw_dir, filepath), nrows=1)
-                        if 'ts_code' in df.columns:
-                            code = df['ts_code'].iloc[0]
-                        else:
-                            code = filepath.replace('ths_', '').replace('_TI.csv', '')
+                stats = []
+                for code, group in grouped:
+                    block_name = get_block_name(code, name_mapping)
+                    date_min = str(group['trade_date'].min())
+                    date_max = str(group['trade_date'].max())
+                    stats.append({
+                        'code': code,
+                        'name': block_name,
+                        'records': len(group),
+                        'date_range': f"{date_min} - {date_max}"
+                    })
 
-                        # 读取完整文件获取记录数和日期范围
-                        full_df = pd_local.read_csv(os.path.join(raw_dir, filepath))
-                        record_count = len(full_df)
-
-                        if 'trade_date' in full_df.columns:
-                            date_min = str(full_df['trade_date'].min())
-                            date_max = str(full_df['trade_date'].max())
-                            date_range = f"{date_min} - {date_max}"
-                        else:
-                            date_range = "N/A"
-
-                        # 获取板块名称
-                        block_name = get_block_name(code, name_mapping)
-
-                        file_stats.append({
-                            'code': code,
-                            'name': block_name,
-                            'records': record_count,
-                            'date_range': date_range
-                        })
-                    except Exception as e:
-                        logger.warning(f"读取文件 {filepath} 失败：{e}")
-
-                # 按代码排序并显示
-                file_stats.sort(key=lambda x: x['code'])
-                for stat in file_stats:
+                # 排序并显示前 50 个
+                stats.sort(key=lambda x: x['code'])
+                for stat in stats[:50]:
                     print(f"{stat['code']:<15}{stat['name']:<25}{stat['records']:<12}{stat['date_range']:<30}")
 
-                if len(ths_files) > 50:
-                    print(f"... 还有 {len(ths_files) - 50} 个文件未显示")
-                print("-" * 70)
+                if len(stats) > 50:
+                    print(f"... 还有 {len(stats) - 50} 个板块未显示")
 
-                # 统计信息
-                total_records = sum(s['records'] for s in file_stats)
-                print(f"总计：{len(ths_files)} 个文件，{total_records:,} 条记录")
+                print("-" * 90)
+                print(f"总计：{len(stats)} 个板块")
             else:
-                print("\n未找到同花顺板块数据")
+                print("\n未找到合并数据，请运行：python src/main.py --mode organize")
 
-            # 其他数据
-            if other_files:
-                print(f"\n【其他数据】{len(other_files)} 个文件")
-                for f in other_files:
-                    print(f"  - {f}")
-            else:
-                print("\n无其他数据文件")
+                # 回退到读取原始文件
+                raw_dir = settings.raw_data_dir
+                if os.path.exists(raw_dir):
+                    other_files = [f for f in os.listdir(raw_dir) if f.endswith(".csv")]
+                    if other_files:
+                        print(f"\n【原始文件】{len(other_files)} 个")
+                        for f in other_files:
+                            print(f"  - {f}")
 
             print("=" * 70 + "\n")
 
@@ -457,65 +445,88 @@ def main():
             organizer = DataOrganizer()
             organizer.organize_directory()
 
+        elif args.mode == "storage":
+            # 存储管理
+            logger.info("执行存储管理")
+            from data.storage_manager import StorageManager
+
+            manager = StorageManager()
+
+            if args.storage_action == "cleanup":
+                print("\n" + "=" * 70)
+                print("存储清理")
+                print("=" * 70)
+                print("警告：此操作将删除所有单板块文件，只保留合并文件")
+                print("这将释放磁盘空间，但单个板块数据将需要从合并文件中读取")
+                print("\n合并文件位置：", manager.merged_file)
+                print("将删除的文件数：", len([f for f in os.listdir(settings.raw_data_dir) if f.endswith('_TI.csv')]))
+                print("\n是否继续？(Y/n): ", end="")
+                # 非确认模式（脚本调用时自动确认）
+                if os.environ.get("AUTO_CONFIRM") == "1":
+                    print("Y (自动确认)")
+                    confirm = "y"
+                else:
+                    confirm = input().strip().lower()
+
+                if confirm in ("y", ""):
+                    deleted = manager.cleanup_raw_files(keep_history=False)
+                    print(f"\n清理完成：删除 {deleted} 个文件")
+                    print(f"保留文件：ths_all_history_*.csv (如果存在)")
+                else:
+                    print("已取消")
+            else:
+                result = manager.verify_data_integrity()
+
+                print("\n" + "=" * 70)
+                print("存储状态验证")
+                print("=" * 70)
+                print(f"状态：{result['status']}")
+                print(f"总记录数：{result['total_records']:,}")
+                print(f"板块数量：{result['unique_codes']}")
+                print(f"日期范围：{result['date_range'][0]} - {result['date_range'][1]}")
+                if result.get('duplicates', 0) > 0:
+                    print(f"重复记录：{result['duplicates']:,}")
+                if result.get('null_fields'):
+                    print(f"空值字段：{result['null_fields']}")
+                print("=" * 70)
+
+                # 统计原始文件
+                raw_files = [f for f in os.listdir(settings.raw_data_dir) if f.endswith('_TI.csv')]
+                history_files = [f for f in os.listdir(settings.raw_data_dir) if 'all_history' in f]
+                print(f"\n原始目录：{len(raw_files)} 个单板块文件，{len(history_files)} 个合集文件")
+                print(f"合并文件：{manager.merged_file}")
+                print("=" * 70 + "\n")
+
         elif args.mode == "backtest":
             # 回测验证
             logger.info("执行回测验证")
             from evaluation.backtester import Backtester
+            from data.storage_manager import StorageManager
             import pandas as pd
 
-            # 直接从 CSV 文件加载历史数据
-            raw_dir = settings.raw_data_dir
+            # 从合并文件加载历史数据
+            manager = StorageManager()
+            concept_data = manager.load_merged_data()
 
-            # 加载所有同花顺行业历史数据（ths_*_TI.csv 格式）
-            ths_files = [f for f in os.listdir(raw_dir) if f.endswith("_TI.csv")]
-
-            if not ths_files:
-                logger.error("未找到同花顺历史数据文件，请先运行历史数据采集")
-                logger.info("运行：python src/main.py --mode history --start-date 20230101 --end-date 20241231")
+            if concept_data.empty:
+                logger.error("未找到合并数据文件，请先运行数据整理")
+                logger.info("运行：python src/main.py --mode organize")
                 return
 
-            logger.info(f"发现 {len(ths_files)} 个历史数据文件")
-
-            # 并行加载所有文件
-            from joblib import Parallel, delayed
-
-            def load_single_file(filepath):
-                try:
-                    df = pd.read_csv(filepath, dtype={
-                        'concept_code': str,
-                        'trade_date': str,
-                        'pct_chg': float,
-                        'vol': float
-                    })
-                    # 重命名字段
-                    if 'pct_change' in df.columns:
-                        df = df.rename(columns={'pct_change': 'pct_chg'})
-                    if 'ts_code' in df.columns:
-                        df = df.rename(columns={'ts_code': 'concept_code'})
-                    return df
-                except Exception as e:
-                    logger.warning(f"加载文件 {filepath} 失败：{e}")
-                    return None
-
-            dfs = Parallel(n_jobs=-1, backend="threading")(
-                delayed(load_single_file)(os.path.join(raw_dir, f))
-                for f in ths_files
-            )
-            dfs = [df for df in dfs if df is not None]
-
-            if not dfs:
-                logger.error("无法加载任何数据文件")
-                return
-
-            concept_data = pd.concat(dfs, ignore_index=True)
             logger.info(f"加载了 {len(concept_data)} 条历史记录")
+
+            # 字段重命名（合并文件使用 ts_code/pct_change，回测使用 concept_code/pct_chg）
+            if 'ts_code' in concept_data.columns and 'concept_code' not in concept_data.columns:
+                concept_data = concept_data.rename(columns={'ts_code': 'concept_code'})
+            if 'pct_change' in concept_data.columns and 'pct_chg' not in concept_data.columns:
+                concept_data = concept_data.rename(columns={'pct_change': 'pct_chg'})
 
             # 应用日期筛选
             start_date = args.start_date or "20230101"
             end_date = args.end_date or "20241231"
             concept_data = concept_data[
-                (concept_data["trade_date"] >= start_date) &
-                (concept_data["trade_date"] <= end_date)
+                (concept_data["trade_date"] >= int(start_date)) &
+                (concept_data["trade_date"] <= int(end_date))
             ]
             logger.info(f"筛选后数据：{len(concept_data)} 条记录 ({start_date} - {end_date})")
 
@@ -575,64 +586,32 @@ def main():
             # 时序交叉验证（Purged K-Fold）
             logger.info("执行时序交叉验证（Purged K-Fold）")
             from evaluation.backtester import Backtester
+            from data.storage_manager import StorageManager
             import pandas as pd
 
-            # 直接从 CSV 文件加载历史数据
-            raw_dir = settings.raw_data_dir
-            ths_files = [f for f in os.listdir(raw_dir) if f.endswith("_TI.csv")]
+            # 从合并文件加载历史数据
+            manager = StorageManager()
+            concept_data = manager.load_merged_data()
 
-            if not ths_files:
-                logger.error("未找到历史数据文件")
+            if concept_data.empty:
+                logger.error("未找到合并数据文件，请先运行数据整理")
+                logger.info("运行：python src/main.py --mode organize")
                 return
 
-            logger.info(f"发现 {len(ths_files)} 个历史数据文件")
-
-            # 并行加载
-            from joblib import Parallel, delayed
-
-            def load_single_file(filepath):
-                try:
-                    df = pd.read_csv(filepath, dtype={
-                        'concept_code': str,
-                        'trade_date': str,
-                        'pct_chg': float
-                    })
-                    # 字段重命名映射
-                    if 'pct_change' in df.columns:
-                        df = df.rename(columns={'pct_change': 'pct_chg'})
-                    if 'ts_code' in df.columns:
-                        df = df.rename(columns={'ts_code': 'concept_code'})
-                    # 确保 concept_code 列存在
-                    if 'concept_code' not in df.columns:
-                        # 尝试从文件名提取
-                        filename = os.path.basename(filepath)
-                        if filename.startswith('ths_') and '_TI.csv' in filename:
-                            code_part = filename.replace('ths_', '').replace('_TI.csv', '')
-                            df['concept_code'] = code_part
-                    return df
-                except Exception as e:
-                    logger.warning(f"加载文件 {filepath} 失败：{e}")
-                    return None
-
-            dfs = Parallel(n_jobs=-1, backend="threading")(
-                delayed(load_single_file)(os.path.join(raw_dir, f))
-                for f in ths_files
-            )
-            dfs = [df for df in dfs if df is not None]
-
-            if not dfs:
-                logger.error("无法加载任何数据文件")
-                return
-
-            concept_data = pd.concat(dfs, ignore_index=True)
             logger.info(f"加载了 {len(concept_data)} 条历史记录")
+
+            # 字段重命名（合并文件使用 ts_code/pct_change，回测使用 concept_code/pct_chg）
+            if 'ts_code' in concept_data.columns and 'concept_code' not in concept_data.columns:
+                concept_data = concept_data.rename(columns={'ts_code': 'concept_code'})
+            if 'pct_change' in concept_data.columns and 'pct_chg' not in concept_data.columns:
+                concept_data = concept_data.rename(columns={'pct_change': 'pct_chg'})
 
             # 应用日期筛选
             start_date = args.start_date or "20200101"
             end_date = args.end_date or "20251231"
             concept_data = concept_data[
-                (concept_data["trade_date"] >= start_date) &
-                (concept_data["trade_date"] <= end_date)
+                (concept_data["trade_date"] >= int(start_date)) &
+                (concept_data["trade_date"] <= int(end_date))
             ]
             logger.info(f"筛选后数据：{len(concept_data)} 条记录")
 
