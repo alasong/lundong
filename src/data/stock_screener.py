@@ -61,7 +61,9 @@ class StockScreener:
         concept_ranking: pd.DataFrame = None,
         date: str = None,
         lookback_days: int = 20,
-        top_n_per_concept: int = None
+        top_n_per_concept: int = None,
+        industry_neutral: bool = False,
+        use_vectorized: bool = True
     ) -> pd.DataFrame:
         """
         从目标板块中筛选优质个股
@@ -72,6 +74,8 @@ class StockScreener:
             date: 筛选基准日期
             lookback_days: 回看天数
             top_n_per_concept: 每个板块选取的个股数量
+            industry_neutral: 是否使用行业中性化评分
+            use_vectorized: 是否使用向量化计算 (性能更好)
 
         Returns:
             DataFrame with columns:
@@ -106,7 +110,7 @@ class StockScreener:
             return pd.DataFrame()
 
         # Step 3: 计算筛选因子
-        factors = self._calculate_factors(stock_data, date)
+        factors = self._calculate_factors(stock_data, date, use_vectorized=use_vectorized)
 
         # Step 4: 应用筛选规则
         filtered = self._apply_rules(factors)
@@ -117,8 +121,12 @@ class StockScreener:
 
         logger.info(f"筛选后剩余 {len(filtered)} 只股票")
 
-        # Step 5: 计算综合得分
-        filtered = self._calculate_scores(filtered)
+        # Step 5: 计算综合得分 (可选行业中性化)
+        if industry_neutral:
+            logger.info("使用行业中性化评分...")
+            filtered = self._calculate_scores_industry_neutral(filtered)
+        else:
+            filtered = self._calculate_scores(filtered)
 
         # Step 6: 合并板块信息
         if concept_ranking is not None and not concept_ranking.empty:
@@ -176,13 +184,32 @@ class StockScreener:
     def _calculate_factors(
         self,
         stock_data: pd.DataFrame,
-        date: str
+        date: str,
+        use_vectorized: bool = True
     ) -> pd.DataFrame:
         """
         计算筛选因子
 
+        Args:
+            stock_data: 股票历史数据
+            date: 基准日期
+            use_vectorized: 是否使用向量化优化（性能更好）
+
         返回:
             DataFrame with factors per stock
+        """
+        if use_vectorized:
+            return self._calculate_factors_vectorized(stock_data, date)
+        else:
+            return self._calculate_factors_legacy(stock_data, date)
+
+    def _calculate_factors_legacy(
+        self,
+        stock_data: pd.DataFrame,
+        date: str
+    ) -> pd.DataFrame:
+        """
+        legacy 方法：逐只股票循环计算（保留用于调试）
         """
         factors_list = []
 
@@ -275,6 +302,132 @@ class StockScreener:
 
         return pd.DataFrame(factors_list)
 
+    def _calculate_factors_vectorized(
+        self,
+        stock_data: pd.DataFrame,
+        date: str
+    ) -> pd.DataFrame:
+        """
+        向量化方法：批量计算所有股票因子（性能优化）
+
+        使用 groupby + agg 向量化操作，避免 Python 循环
+        """
+        logger.debug("使用向量化方法计算因子...")
+
+        # 按股票分组
+        grouped = stock_data.groupby('ts_code')
+
+        # 检查每组数据量
+        valid_stocks = grouped.filter(lambda x: len(x) >= 10)['ts_code'].unique()
+        stock_data = stock_data[stock_data['ts_code'].isin(valid_stocks)]
+        grouped = stock_data.groupby('ts_code')
+
+        # 1. 计算流动性因子 (20 日平均成交额/换手率)
+        liquidity = grouped.apply(
+            lambda df: pd.Series({
+                'avg_amount_20d': df.tail(20)['amount'].mean() / 100,
+                'avg_turnover_20d': df.tail(20)['turnover_rate'].mean() if 'turnover_rate' in df.columns else None
+            })
+        ).reset_index()
+
+        # 2. 计算动量因子 (向量化计算多周期动量)
+        def calc_momentum(df):
+            df = df.sort_values('trade_date')
+            close = df['close'].values
+            n = len(close)
+            result = {'momentum_5d': 0.0, 'momentum_10d': 0.0, 'momentum_20d': 0.0}
+            if n >= 5:
+                result['momentum_5d'] = (close[-1] / close[-5] - 1) * 100
+            if n >= 10:
+                result['momentum_10d'] = (close[-1] / close[-10] - 1) * 100
+            if n >= 20:
+                result['momentum_20d'] = (close[-1] / close[-20] - 1) * 100
+            result['momentum_score'] = (
+                result['momentum_5d'] * 0.4 +
+                result['momentum_10d'] * 0.3 +
+                result['momentum_20d'] * 0.3
+            )
+            return pd.Series(result)
+
+        momentum = grouped.apply(calc_momentum).reset_index()
+
+        # 3. 计算波动率因子
+        def calc_volatility(df):
+            df = df.sort_values('trade_date')
+            if len(df) >= 20:
+                returns = df['pct_chg'].values[-20:] / 100  # 转换为小数
+                vol = np.std(returns) * np.sqrt(252)
+            else:
+                vol = 0
+            return pd.Series({'volatility_20d': vol})
+
+        volatility = grouped.apply(calc_volatility).reset_index()
+
+        # 4. 获取基本面数据 (批量查询)
+        basic_data = self._get_basic_data_batch(list(valid_stocks), date)
+
+        # 5. 获取股票基本信息 (名称/板块)
+        stock_info = grouped.apply(
+            lambda df: pd.Series({
+                'stock_name': df['stock_name'].iloc[0] if 'stock_name' in df.columns else '',
+                'concept_code': df['concept_code'].iloc[0] if 'concept_code' in df.columns else ''
+            })
+        ).reset_index()
+
+        # 合并所有因子
+        factors = stock_info.merge(liquidity, on='ts_code', how='left')
+        factors = factors.merge(momentum, on='ts_code', how='left')
+        factors = factors.merge(volatility, on='ts_code', how='left')
+        factors = factors.merge(basic_data, on='ts_code', how='left')
+        factors['trade_date'] = date
+
+        # 添加行业标签用于中性化 (使用板块代码作为代理)
+        factors['industry'] = factors['concept_code']
+
+        logger.debug(f"向量化因子计算完成：{len(factors)} 只股票")
+        return factors
+
+    def _get_basic_data_batch(
+        self,
+        stock_codes: List[str],
+        date: str
+    ) -> pd.DataFrame:
+        """
+        批量获取基本面数据 (PE/PB/市值)
+
+        使用单个 SQL 查询代替多次单独查询
+        """
+        if not stock_codes:
+            return pd.DataFrame()
+
+        # 构建 IN 子句
+        placeholders = ','.join(['?' for _ in stock_codes])
+        query = f'''
+            SELECT ts_code, pe_ttm, pb, total_mv
+            FROM stock_daily_basic
+            WHERE ts_code IN ({placeholders}) AND trade_date = ?
+        '''
+
+        try:
+            # 添加日期参数
+            params = stock_codes + [date]
+            result = self.db.query(query, params)
+
+            if not result:
+                return pd.DataFrame(columns=['ts_code', 'pe_ttm', 'pb_ttm', 'market_cap'])
+
+            # 转换为 DataFrame
+            df = pd.DataFrame(result, columns=['ts_code', 'pe_ttm', 'pb_ttm', 'total_mv'])
+            # 市值从万元转换为亿元
+            df['market_cap'] = df['total_mv'] / 10000.0
+            df = df.drop(columns=['total_mv'])
+
+            return df
+
+        except Exception as e:
+            logger.debug(f"批量获取基本面数据失败：{e}")
+            return pd.DataFrame(columns=['ts_code', 'pe_ttm', 'pb_ttm', 'market_cap'])
+
     def _apply_rules(self, factors: pd.DataFrame) -> pd.DataFrame:
         """应用筛选规则"""
         df = factors.copy()
@@ -350,6 +503,99 @@ class StockScreener:
             df['size_score'] = 50.0  # 默认中间分
 
         # 综合得分 - 使用配置化权重
+        df['stock_score'] = (
+            weights['liquidity'] * df['liquidity_score'] +
+            weights['momentum'] * df['momentum_score'] +
+            weights['value'] * df['value_score'] +
+            weights['size'] * df['size_score']
+        )
+
+        return df
+
+    def _calculate_scores_industry_neutral(
+        self,
+        df: pd.DataFrame,
+        industry_col: str = 'industry'
+    ) -> pd.DataFrame:
+        """
+        计算行业中性化后的综合得分
+
+        在每个行业内部分别计算排名，避免行业偏差
+
+        Args:
+            df: 因子 DataFrame
+            industry_col: 行业列名
+
+        Returns:
+            包含中性化得分的 DataFrame
+        """
+        weights = self.SCREENING_RULES.get('score_weights', {
+            'liquidity': 0.30,
+            'momentum': 0.30,
+            'value': 0.20,
+            'size': 0.20,
+        })
+
+        df = df.copy()
+
+        # 在每个行业内计算排名得分
+        def rank_within_industry(group, col, ascending):
+            """组内排名归一化到 0-100"""
+            if len(group) < 2:
+                return pd.Series(50.0, index=group.index)
+            # 使用 rank 方法，返回 0-1 的百分位，再乘以 100
+            return group[col].rank(ascending=ascending, pct=True) * 100
+
+        # 按行业分组
+        if industry_col not in df.columns or df[industry_col].isna().all():
+            # 如果没有行业数据，使用普通方法
+            return self._calculate_scores(df)
+
+        def rank_within_group(group, col, ascending):
+            """组内排名归一化到 0-100"""
+            if len(group) < 2:
+                return pd.Series(50.0, index=group.index, name=col)
+            result = group[col].rank(ascending=ascending, pct=True) * 100
+            result.name = col
+            return result
+
+        def size_score_group(group):
+            """计算市值得分"""
+            result = self._normalize_mid_score(group['market_cap'])
+            result.name = 'size_score'
+            return result
+
+        # 行业内流动性得分
+        liquidity_scores = []
+        for name, group in df.groupby(industry_col):
+            liquidity_scores.append(rank_within_group(group, 'avg_amount_20d', ascending=False))
+        df['liquidity_score'] = pd.concat(liquidity_scores)
+
+        # 行业内动量得分
+        momentum_scores = []
+        for name, group in df.groupby(industry_col):
+            momentum_scores.append(rank_within_group(group, 'momentum_score', ascending=False))
+        df['momentum_score'] = pd.concat(momentum_scores)
+
+        # 行业内估值得分 (PE 越小越好)
+        if df['pe_ttm'].notna().any():
+            value_scores = []
+            for name, group in df.groupby(industry_col):
+                value_scores.append(rank_within_group(group, 'pe_ttm', ascending=True))
+            df['value_score'] = pd.concat(value_scores)
+        else:
+            df['value_score'] = 50.0
+
+        # 行业内市值得分 (使用中间值最优)
+        if df['market_cap'].notna().any():
+            size_scores = []
+            for name, group in df.groupby(industry_col):
+                size_scores.append(size_score_group(group))
+            df['size_score'] = pd.concat(size_scores)
+        else:
+            df['size_score'] = 50.0
+
+        # 综合得分
         df['stock_score'] = (
             weights['liquidity'] * df['liquidity_score'] +
             weights['momentum'] * df['momentum_score'] +
