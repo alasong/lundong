@@ -189,6 +189,95 @@ def import_from_local_file(db, csv_dir: str = "data/constituents"):
     return total_count
 
 
+def fetch_all_ths_concepts(client: TushareTHSClient) -> list:
+    """
+    获取所有同花顺概念板块
+    """
+    try:
+        logger.info("获取同花顺概念板块列表...")
+        # 获取概念板块列表
+        df = client.pro.concept()
+        if df is not None:
+            concepts = []
+            for _, row in df.iterrows():
+                concepts.append({
+                    'concept_code': row.get('ts_code', ''),
+                    'concept_name': row.get('name', ''),
+                })
+            logger.info(f"获取到 {len(concepts)} 个概念板块")
+            return concepts
+        return []
+    except Exception as e:
+        logger.error(f"获取概念板块失败：{e}")
+        return []
+
+
+def auto_expand_concepts(db, client: TushareTHSClient, max_concepts: int = 100):
+    """
+    自动扩展概念板块成分股
+    """
+    # 获取所有概念
+    concepts = fetch_all_ths_concepts(client)
+
+    if not concepts:
+        logger.warning("未能获取概念板块列表")
+        return 0
+
+    # 跳过已存在的板块
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT DISTINCT concept_code FROM concept_constituent")
+    existing = set(row[0] for row in cursor.fetchall())
+
+    logger.info(f"已存在 {len(existing)} 个板块")
+
+    # 筛选需要获取的板块
+    to_fetch = [c for c in concepts if c['concept_code'] not in existing][:max_concepts]
+    logger.info(f"计划获取 {len(to_fetch)} 个新板块")
+
+    total_count = 0
+    success_count = 0
+
+    for i, concept in enumerate(to_fetch):
+        concept_code = concept['concept_code']
+        concept_name = concept['concept_name']
+
+        try:
+            logger.info(f"[{i+1}/{len(to_fetch)}] 获取 {concept_code} ({concept_name}) 成分股...")
+
+            # 转换为东财代码格式
+            if concept_code.startswith('885'):
+                bk_code = 'BK' + concept_code[2:8]
+            elif concept_code.startswith('881'):
+                bk_code = 'BK' + concept_code[2:6].zfill(4)
+            else:
+                continue
+
+            df = client.pro.concept_member(concept_code=bk_code)
+            if df is not None and len(df) > 0:
+                constituents = []
+                for _, row in df.iterrows():
+                    constituents.append({
+                        'stock_code': row.get('ts_code', ''),
+                        'stock_name': row.get('name', '')
+                    })
+
+                db.save_concept_constituents(concept_code, constituents)
+                logger.info(f"  保存成功：{len(constituents)} 只成分股")
+                total_count += len(constituents)
+                success_count += 1
+            else:
+                logger.warning(f"  获取失败：成分股为空")
+
+        except Exception as e:
+            logger.error(f"  获取失败：{e}")
+            continue
+
+    conn.close()
+    logger.info(f"完成：成功 {success_count}/{len(to_fetch)} 个板块，共 {total_count} 只成分股")
+    return total_count
+
+
 def main():
     """主函数"""
     print("=" * 70)
@@ -220,8 +309,9 @@ def main():
     print("  1. 从同花顺接口获取（需要 Tushare 权限）")
     print("  2. 从本地 CSV 文件导入")
     print("  3. 两者都执行")
+    print("  4. 自动扩展所有概念板块（推荐）")
 
-    choice = input("\n请输入选择 (1/2/3): ").strip()
+    choice = input("\n请输入选择 (1/2/3/4): ").strip()
 
     new_count = 0
 
@@ -232,6 +322,10 @@ def main():
     if choice in ['2', '3']:
         print("\n从本地 CSV 文件导入...")
         new_count += import_from_local_file(db)
+
+    if choice == '4':
+        print("\n自动扩展概念板块...")
+        new_count += auto_expand_concepts(db, client, max_concepts=100)
 
     # 显示结果
     print("\n" + "=" * 70)
