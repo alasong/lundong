@@ -906,6 +906,27 @@ class SQLiteDatabase:
             for r in results
         ]
 
+    def get_all_constituents(self) -> List[Dict[str, Any]]:
+        """
+        获取所有成分股（去重）
+
+        Returns:
+            所有成分股列表
+        """
+        sql = """
+            SELECT DISTINCT stock_code, stock_name
+            FROM concept_constituent
+            ORDER BY stock_code
+        """
+        results = self.query(sql)
+        return [
+            {
+                'stock_code': r[0],
+                'stock_name': r[1]
+            }
+            for r in results
+        ]
+
     def get_constituent_stocks(
         self,
         concept_codes: List[str],
