@@ -189,17 +189,37 @@ class StockScreener:
             stock_name = stock_df['stock_name'].iloc[0] if 'stock_name' in stock_df.columns else ''
             concept_code = stock_df['concept_code'].iloc[0] if 'concept_code' in stock_df.columns else ''
 
+            # 从数据库获取基本面数据 (PE/PB/市值)
+            pe_ttm = None
+            pb_ttm = None
+            market_cap = None  # 亿元
+
+            try:
+                import sqlite3
+                conn = sqlite3.connect('data/stock.db')
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT pe_ttm, pb, total_mv
+                    FROM stock_daily_basic
+                    WHERE ts_code = ? AND trade_date = ?
+                ''', (stock_code, date))
+                row = cursor.fetchone()
+                if row:
+                    # PE 直接使用该值
+                    pe_ttm = row[0]
+                    # PB 直接使用该值
+                    pb_ttm = row[1]
+                    # 市值：从万元转换为亿元 (除以 10000)
+                    if row[2] is not None:
+                        market_cap = row[2] / 10000.0
+                conn.close()
+            except Exception as e:
+                logger.debug(f"获取 {stock_code} 基本面数据失败：{e}")
+
             # 流动性因子
             # amount 单位是千元，除以 100 转换为万元
             avg_amount_20d = stock_df.tail(20)['amount'].mean() / 100  # 转换为万元
             avg_turnover_20d = stock_df.tail(20)['turnover_rate'].mean() if 'turnover_rate' in stock_df.columns else None
-
-            # 市值因子
-            market_cap = latest.get('total_mv')  # 亿元
-
-            # 估值因子
-            pe_ttm = latest.get('pe')
-            pb_ttm = latest.get('pb')
 
             # 动量因子
             close_prices = stock_df['close'].values
