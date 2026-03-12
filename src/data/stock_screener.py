@@ -21,12 +21,12 @@ class StockScreener:
     # 筛选条件配置
     SCREENING_RULES = {
         # 流动性要求
-        'min_avg_amount': 5000,        # 日均成交额≥5000 万
+        'min_avg_amount': 3000,        # 日均成交额≥3000 万 (降低门槛覆盖更多中小盘)
         'min_avg_turnover': 1.0,       # 日均换手率≥1%
 
         # 市值要求
         'min_market_cap': 50,          # 市值≥50 亿
-        'max_market_cap': 2000,        # 市值≤2000 亿
+        'max_market_cap': 5000,        # 市值≤5000 亿 (提高上限避免错过龙头)
 
         # 估值要求
         'max_pe': 100,                 # PE<100 (排除极端高估)
@@ -34,7 +34,15 @@ class StockScreener:
         'max_pb': 30,                  # PB<30 (排除过度炒作)
 
         # 技术面要求
-        'max_volatility': 0.25,        # 20 日波动率<25%
+        'max_volatility': 0.35,        # 20 日波动率<35% (提高门槛允许高波动成长股)
+
+        # 综合得分权重配置
+        'score_weights': {
+            'liquidity': 0.30,
+            'momentum': 0.30,
+            'value': 0.20,
+            'size': 0.20,
+        }
     }
 
     def __init__(self, db: SQLiteDatabase = None):
@@ -189,22 +197,20 @@ class StockScreener:
             stock_name = stock_df['stock_name'].iloc[0] if 'stock_name' in stock_df.columns else ''
             concept_code = stock_df['concept_code'].iloc[0] if 'concept_code' in stock_df.columns else ''
 
-            # 从数据库获取基本面数据 (PE/PB/市值)
+            # 从数据库获取基本面数据 (PE/PB/市值) - 使用 self.db 统一连接
             pe_ttm = None
             pb_ttm = None
             market_cap = None  # 亿元
 
             try:
-                import sqlite3
-                conn = sqlite3.connect('data/stock.db')
-                cursor = conn.cursor()
-                cursor.execute('''
+                # 使用 self.db 统一查询，避免直接连接
+                result = self.db.query('''
                     SELECT pe_ttm, pb, total_mv
                     FROM stock_daily_basic
                     WHERE ts_code = ? AND trade_date = ?
                 ''', (stock_code, date))
-                row = cursor.fetchone()
-                if row:
+                if result:
+                    row = result[0]
                     # PE 直接使用该值
                     pe_ttm = row[0]
                     # PB 直接使用该值
@@ -212,7 +218,6 @@ class StockScreener:
                     # 市值：从万元转换为亿元 (除以 10000)
                     if row[2] is not None:
                         market_cap = row[2] / 10000.0
-                conn.close()
             except Exception as e:
                 logger.debug(f"获取 {stock_code} 基本面数据失败：{e}")
 
@@ -221,17 +226,28 @@ class StockScreener:
             avg_amount_20d = stock_df.tail(20)['amount'].mean() / 100  # 转换为万元
             avg_turnover_20d = stock_df.tail(20)['turnover_rate'].mean() if 'turnover_rate' in stock_df.columns else None
 
-            # 动量因子
+            # 动量因子 - 多周期动量 (5 日/10 日/20 日)
             close_prices = stock_df['close'].values
+            momentum_5d = 0.0
+            momentum_10d = 0.0
+            momentum_20d = 0.0
+
+            if len(close_prices) >= 5:
+                momentum_5d = (close_prices[-1] / close_prices[-5] - 1) * 100
+            if len(close_prices) >= 10:
+                momentum_10d = (close_prices[-1] / close_prices[-10] - 1) * 100
             if len(close_prices) >= 20:
                 momentum_20d = (close_prices[-1] / close_prices[-20] - 1) * 100
-            else:
-                momentum_20d = 0
 
-            # 波动率因子
+            # 综合动量得分 (加权平均：短期 40% + 中期 30% + 长期 30%)
+            momentum_score = momentum_5d * 0.4 + momentum_10d * 0.3 + momentum_20d * 0.3
+
+            # 波动率因子 - 修复：pct_chg 已是百分比格式，不需要除以 100
             if len(close_prices) >= 20:
                 daily_returns = stock_df['pct_chg'].values[-20:]
-                volatility_20d = np.std(daily_returns) * np.sqrt(252) / 100  # 年化波动率
+                # pct_chg 是百分比格式 (如 2.5 表示 2.5%)
+                # 转换为小数后计算年化波动率
+                volatility_20d = np.std(daily_returns / 100) * np.sqrt(252)
             else:
                 volatility_20d = 0
 
@@ -248,8 +264,11 @@ class StockScreener:
                 # 估值
                 'pe_ttm': pe_ttm,
                 'pb_ttm': pb_ttm,
-                # 动量
+                # 动量 (多周期)
+                'momentum_5d': momentum_5d,
+                'momentum_10d': momentum_10d,
                 'momentum_20d': momentum_20d,
+                'momentum_score': momentum_score,  # 综合动量得分
                 # 波动率
                 'volatility_20d': volatility_20d,
             })
@@ -265,9 +284,15 @@ class StockScreener:
         # 流动性过滤
         if 'min_avg_amount' in rules:
             df = df[df['avg_amount_20d'] >= rules['min_avg_amount']]
-        # 注意：turnover_rate 可能为空，跳过此过滤
-        # if 'min_avg_turnover' in rules and df['avg_turnover_20d'].notna().any():
-        #     df = df[df['avg_turnover_20d'] >= rules['min_avg_turnover']]
+
+        # 换手率过滤 - 如果有数据则应用
+        if 'min_avg_turnover' in rules:
+            # 检查是否有换手率数据
+            if df['avg_turnover_20d'].notna().any():
+                # 对于换手率为空的股票，使用成交额作为替代判断
+                low_turnover_mask = df['avg_turnover_20d'].isna() & (df['avg_amount_20d'] < rules['min_avg_amount'] * 2)
+                low_turnover_mask |= df['avg_turnover_20d'] < rules['min_avg_turnover']
+                df = df[~low_turnover_mask]
 
         # 市值过滤 - 如果数据为空，跳过
         if 'min_market_cap' in rules and df['market_cap'].notna().any():
@@ -283,7 +308,7 @@ class StockScreener:
         if 'max_pb' in rules and df['pb_ttm'].notna().any():
             df = df[(df['pb_ttm'].isna()) | (df['pb_ttm'] <= rules['max_pb'])]
 
-        # 波动率过滤
+        # 波动率过滤 - 使用修复后的计算
         if 'max_volatility' in rules:
             df = df[df['volatility_20d'] <= rules['max_volatility']]
 
@@ -295,15 +320,22 @@ class StockScreener:
 
         得分构成:
         - 流动性得分 (30%)
-        - 动量得分 (30%)
+        - 动量得分 (30%) - 使用多周期综合动量
         - 估值得分 (20%)
         - 市值得分 (20%)
         """
+        weights = self.SCREENING_RULES.get('score_weights', {
+            'liquidity': 0.30,
+            'momentum': 0.30,
+            'value': 0.20,
+            'size': 0.20,
+        })
+
         # 流动性得分 (成交额越大得分越高)
         df['liquidity_score'] = self._normalize_score(df['avg_amount_20d'], ascending=True)
 
-        # 动量得分 (动量越大得分越高)
-        df['momentum_score'] = self._normalize_score(df['momentum_20d'], ascending=True)
+        # 动量得分 (使用综合动量得分，动量越大得分越高)
+        df['momentum_score'] = self._normalize_score(df['momentum_score'], ascending=True)
 
         # 估值得分 (PE 越小得分越高) - 如果 PE 为空，使用中间值
         if df['pe_ttm'].notna().any():
@@ -317,12 +349,12 @@ class StockScreener:
         else:
             df['size_score'] = 50.0  # 默认中间分
 
-        # 综合得分
+        # 综合得分 - 使用配置化权重
         df['stock_score'] = (
-            0.30 * df['liquidity_score'] +
-            0.30 * df['momentum_score'] +
-            0.20 * df['value_score'] +
-            0.20 * df['size_score']
+            weights['liquidity'] * df['liquidity_score'] +
+            weights['momentum'] * df['momentum_score'] +
+            weights['value'] * df['value_score'] +
+            weights['size'] * df['size_score']
         )
 
         return df
@@ -330,7 +362,8 @@ class StockScreener:
     def _normalize_score(
         self,
         series: pd.Series,
-        ascending: bool = True
+        ascending: bool = True,
+        use_quantile: bool = True
     ) -> pd.Series:
         """
         归一化得分到 0-100
@@ -338,14 +371,20 @@ class StockScreener:
         Args:
             series: 原始数据
             ascending: True=越大越好，False=越小越好
+            use_quantile: 是否使用分位数截断 (处理异常值)
         """
         series = series.fillna(series.median())
 
         if len(series) == 0:
             return pd.Series(dtype=float)
 
-        min_val = series.min()
-        max_val = series.max()
+        if use_quantile:
+            # 使用 1% 和 99% 分位数截断，避免异常值影响
+            min_val = series.quantile(0.01)
+            max_val = series.quantile(0.99)
+        else:
+            min_val = series.min()
+            max_val = series.max()
 
         if max_val == min_val:
             return pd.Series(50.0, index=series.index)
@@ -355,7 +394,7 @@ class StockScreener:
         else:
             score = (max_val - series) / (max_val - min_val) * 100
 
-        return score
+        return score.clip(0, 100)
 
     def _normalize_mid_score(
         self,
