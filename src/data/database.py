@@ -162,10 +162,77 @@ class SQLiteDatabase:
             )
         """)
 
+        # ===== 个股相关表结构 =====
+
+        # 个股行情数据表
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS stock_daily (
+                ts_code TEXT NOT NULL,          -- 个股代码 (000001.SZ)
+                trade_date TEXT NOT NULL,       -- 交易日期
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                pre_close REAL,
+                change REAL,
+                pct_chg REAL,
+                vol REAL,
+                amount REAL,
+                turnover_rate REAL,             -- 换手率
+                pe REAL,                        -- 市盈率
+                pb REAL,                        -- 市净率
+                ps REAL,                        -- 市销率
+                total_mv REAL,                  -- 总市值
+                circ_mv REAL,                   -- 流通市值
+                PRIMARY KEY (ts_code, trade_date)
+            )
+        """)
+
+        # 板块 - 个股成分关系表
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS concept_constituent (
+                concept_code TEXT NOT NULL,     -- 板块代码
+                stock_code TEXT NOT NULL,       -- 个股代码
+                stock_name TEXT,
+                weight REAL,                    -- 权重
+                is_core INTEGER DEFAULT 1,      -- 是否核心成分股
+                listed_date TEXT,               -- 上市日期
+                updated_at TEXT,
+                PRIMARY KEY (concept_code, stock_code)
+            )
+        """)
+
+        # 个股因子表 (用于筛选)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS stock_factors (
+                ts_code TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                market_cap REAL,                -- 市值
+                pe_ttm REAL,                    -- 市盈率
+                pb_ttm REAL,                    -- 市净率
+                ps_ttm REAL,                    -- 市销率
+                momentum_20d REAL,              -- 20 日动量
+                momentum_60d REAL,              -- 60 日动量
+                volatility_20d REAL,            -- 20 日波动率
+                avg_turnover_20d REAL,          -- 20 日平均换手率
+                avg_amount_20d REAL,            -- 20 日平均成交额
+                PRIMARY KEY (ts_code, trade_date)
+            )
+        """)
+
         # 创建索引加速查询
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_date ON concept_daily(trade_date)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ts_code ON concept_daily(ts_code)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_concept_date ON concept_daily(ts_code, trade_date)")
+
+        # 个股权威引
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_stock_trade_date ON stock_daily(trade_date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_stock_ts_code ON stock_daily(ts_code)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_stock_date ON stock_daily(ts_code, trade_date)")
+
+        # 成分股索引
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_constituent_concept ON concept_constituent(concept_code)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_constituent_stock ON concept_constituent(stock_code)")
 
         conn.commit()
         logger.info("数据表创建完成")
@@ -660,6 +727,304 @@ class SQLiteDatabase:
             except Exception:
                 pass
         self._initialized = False
+
+    # ==================== 个股数据操作方法 ====================
+
+    def save_stock_daily(
+        self,
+        ts_code: str,
+        data: Dict[str, Any],
+        replace: bool = True
+    ):
+        """
+        保存个股日线数据
+
+        Args:
+            ts_code: 个股代码
+            data: 数据字典
+            replace: 是否覆盖已有数据
+        """
+        data['ts_code'] = ts_code
+        self.batch_insert('stock_daily', [data], replace)
+
+    def save_stock_daily_batch(
+        self,
+        df: pd.DataFrame,
+        replace: bool = True
+    ):
+        """
+        批量保存个股日线数据
+
+        Args:
+            df: DataFrame (必须包含 ts_code, trade_date 等列)
+            replace: 是否覆盖已有数据
+        """
+        self.batch_insert_dataframe('stock_daily', df, replace)
+
+    def get_stock_data(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str
+    ) -> pd.DataFrame:
+        """
+        获取个股数据
+
+        Args:
+            ts_code: 个股代码
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            pandas DataFrame
+        """
+        sql = """
+            SELECT * FROM stock_daily
+            WHERE ts_code = ?
+              AND trade_date >= ?
+              AND trade_date <= ?
+            ORDER BY trade_date
+        """
+        return self.query_to_dataframe(sql, (ts_code, start_date, end_date))
+
+    def get_all_stock_data(self, trade_date: str = None) -> pd.DataFrame:
+        """
+        获取所有个股数据
+
+        Args:
+            trade_date: 交易日期，如果为 None 则返回所有数据
+
+        Returns:
+            pandas DataFrame
+        """
+        if trade_date:
+            sql = """
+                SELECT * FROM stock_daily
+                WHERE trade_date = ?
+                ORDER BY ts_code
+            """
+            return self.query_to_dataframe(sql, (trade_date,))
+        else:
+            sql = "SELECT * FROM stock_daily ORDER BY ts_code, trade_date"
+            return self.query_to_dataframe(sql)
+
+    def get_stock_missing_dates(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str
+    ) -> List[str]:
+        """
+        获取个股缺失的交易日期
+
+        Args:
+            ts_code: 个股代码
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            缺失的日期列表
+        """
+        sql = """
+            SELECT DISTINCT trade_date
+            FROM stock_daily
+            WHERE ts_code = ?
+              AND trade_date BETWEEN ? AND ?
+        """
+        results = self.query(sql, (ts_code, start_date, end_date))
+        existing_dates = set(row[0] for row in results)
+
+        from datetime import timedelta
+        start = datetime.strptime(start_date, "%Y%m%d")
+        end = datetime.strptime(end_date, "%Y%m%d")
+
+        all_dates = []
+        current = start
+        while current <= end:
+            if current.weekday() < 5:
+                date_str = current.strftime("%Y%m%d")
+                if date_str not in existing_dates:
+                    all_dates.append(date_str)
+            current += timedelta(days=1)
+
+        return all_dates
+
+    # ==================== 成分股操作方法 ====================
+
+    def save_concept_constituents(
+        self,
+        concept_code: str,
+        constituents: List[Dict[str, Any]]
+    ):
+        """
+        保存板块成分股
+
+        Args:
+            concept_code: 板块代码
+            constituents: 成分股列表，每个 dict 包含 stock_code, stock_name, weight 等
+        """
+        updated_at = datetime.now().strftime("%Y%m%d")
+        data = []
+        for stock in constituents:
+            record = {
+                'concept_code': concept_code,
+                'stock_code': stock.get('stock_code'),
+                'stock_name': stock.get('stock_name', ''),
+                'weight': stock.get('weight'),
+                'is_core': stock.get('is_core', 1),
+                'listed_date': stock.get('listed_date'),
+                'updated_at': updated_at
+            }
+            data.append(record)
+        self.batch_insert('concept_constituent', data, replace=True)
+
+    def get_concept_constituents(self, concept_code: str) -> List[Dict[str, Any]]:
+        """
+        获取板块成分股
+
+        Args:
+            concept_code: 板块代码
+
+        Returns:
+            成分股列表
+        """
+        sql = """
+            SELECT stock_code, stock_name, weight, is_core, listed_date
+            FROM concept_constituent
+            WHERE concept_code = ?
+            ORDER BY weight DESC NULLS LAST
+        """
+        results = self.query(sql, (concept_code,))
+        return [
+            {
+                'stock_code': r[0],
+                'stock_name': r[1],
+                'weight': r[2],
+                'is_core': bool(r[3]) if r[3] is not None else True,
+                'listed_date': r[4]
+            }
+            for r in results
+        ]
+
+    def get_constituent_stocks(
+        self,
+        concept_codes: List[str],
+        limit_per_concept: int = None
+    ) -> pd.DataFrame:
+        """
+        获取多个板块的成分股
+
+        Args:
+            concept_codes: 板块代码列表
+            limit_per_concept: 每个板块限制的数量
+
+        Returns:
+            pandas DataFrame
+        """
+        if not concept_codes:
+            return pd.DataFrame()
+
+        placeholders = ','.join(['?' for _ in concept_codes])
+        if limit_per_concept:
+            sql = f"""
+                SELECT concept_code, stock_code, stock_name, weight, is_core
+                FROM (
+                    SELECT *,
+                           ROW_NUMBER() OVER (PARTITION BY concept_code ORDER BY weight DESC NULLS LAST) as rn
+                    FROM concept_constituent
+                    WHERE concept_code IN ({placeholders})
+                )
+                WHERE rn <= ?
+            """
+            params = tuple(concept_codes) + (limit_per_concept,)
+        else:
+            sql = f"""
+                SELECT concept_code, stock_code, stock_name, weight, is_core
+                FROM concept_constituent
+                WHERE concept_code IN ({placeholders})
+            """
+            params = tuple(concept_codes)
+
+        return self.query_to_dataframe(sql, params)
+
+    # ==================== 个股因子操作方法 ====================
+
+    def save_stock_factors(
+        self,
+        ts_code: str,
+        factors: Dict[str, Any]
+    ):
+        """
+        保存个股因子
+
+        Args:
+            ts_code: 个股代码
+            factors: 因子数据字典
+        """
+        factors['ts_code'] = ts_code
+        self.batch_insert('stock_factors', [factors], replace=True)
+
+    def get_stock_factors(
+        self,
+        ts_code: str,
+        trade_date: str = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        获取个股因子
+
+        Args:
+            ts_code: 个股代码
+            trade_date: 交易日期
+
+        Returns:
+            因子数据字典
+        """
+        if trade_date:
+            sql = """
+                SELECT * FROM stock_factors
+                WHERE ts_code = ? AND trade_date = ?
+            """
+            results = self.query(sql, (ts_code, trade_date))
+        else:
+            sql = """
+                SELECT * FROM stock_factors
+                WHERE ts_code = ?
+                ORDER BY trade_date DESC
+                LIMIT 1
+            """
+            results = self.query(sql, (ts_code,))
+
+        if results:
+            cols = ['ts_code', 'trade_date', 'market_cap', 'pe_ttm', 'pb_ttm', 'ps_ttm',
+                    'momentum_20d', 'momentum_60d', 'volatility_20d', 'avg_turnover_20d', 'avg_amount_20d']
+            return dict(zip(cols, results[0]))
+        return None
+
+    # ==================== 统计方法 ====================
+
+    def get_stock_statistics(self) -> Dict[str, Any]:
+        """获取个股数据库统计信息"""
+        stats = {}
+
+        # 总记录数
+        sql = "SELECT COUNT(*) FROM stock_daily"
+        result = self.query(sql)
+        stats['total_records'] = result[0][0] if result else 0
+
+        # 个股数量
+        sql = "SELECT COUNT(DISTINCT ts_code) FROM stock_daily"
+        result = self.query(sql)
+        stats['stock_count'] = result[0][0] if result else 0
+
+        # 日期范围
+        sql = "SELECT MIN(trade_date), MAX(trade_date) FROM stock_daily"
+        result = self.query(sql)
+        if result and result[0][0]:
+            stats['date_range'] = (str(result[0][0]), str(result[0][1]))
+        else:
+            stats['date_range'] = (None, None)
+
+        return stats
 
 
 # 全局数据库实例

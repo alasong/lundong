@@ -138,26 +138,135 @@ class TushareTHSClient:
     
     def get_ths_members(self, ts_code: str) -> Optional[pd.DataFrame]:
         """获取同花顺指数成分股
-        
+
         Args:
             ts_code: 指数代码
-            
+
         Returns:
             DataFrame with constituent stocks
         """
         logger.info(f"获取 {ts_code} 成分股...")
-        
+
         try:
             # Tushare 可能没有直接的成分股接口 for 同花顺
             # 需要用 index_member
             df = self.pro.index_member(index_code=ts_code)
-            
+
             if df is not None and len(df) > 0:
                 logger.info(f"获取成功：{len(df)} 只成分股")
                 return df
             else:
                 logger.warning(f"返回空数据")
                 return None
+        except Exception as e:
+            logger.error(f"获取失败：{str(e)[:100]}")
+            return None
+
+    def get_stock_daily(
+        self,
+        ts_code: str,
+        start_date: str = '20200101',
+        end_date: str = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取个股日线数据
+
+        Args:
+            ts_code: 个股代码 (e.g., '000001.SZ')
+            start_date: 开始日期 (YYYYMMDD)
+            end_date: 结束日期 (默认今天)
+
+        Returns:
+            DataFrame with OHLCV data
+        """
+        if end_date is None:
+            end_date = pd.Timestamp.now().strftime('%Y%m%d')
+
+        logger.info(f"获取 {ts_code} 历史行情 ({start_date} - {end_date})...")
+
+        for i in range(self.max_retries):
+            try:
+                df = self.pro.daily(ts_code=ts_code,
+                                   start_date=start_date,
+                                   end_date=end_date)
+
+                if df is not None and len(df) > 0:
+                    logger.info(f"获取成功：{len(df)} 条")
+                    return df
+
+                logger.warning(f"返回空数据")
+                return None
+
+            except Exception as e:
+                if i < self.max_retries - 1:
+                    logger.warning(f"获取失败，重试中 ({i+1}/{self.max_retries}): {str(e)[:80]}")
+                    time.sleep(1.0 * (i + 1))
+                else:
+                    logger.error(f"最终失败：{str(e)[:100]}")
+                    return None
+
+        return None
+
+    def get_stock_list(self, exchange: str = None) -> pd.DataFrame:
+        """
+        获取 A 股上市公司列表
+
+        Args:
+            exchange: 交易所 (SSE=上交所，SZSE=深交所，BSE=北交所)
+
+        Returns:
+            DataFrame with stock list
+        """
+        logger.info(f"获取 A 股上市公司列表...")
+
+        try:
+            df = self.pro.stock_basic(
+                exchange=exchange,
+                list_status='L'  # 只取正常上市的公司
+            )
+
+            if df is not None and len(df) > 0:
+                logger.info(f"获取成功：{len(df)} 只股票")
+                return df
+            else:
+                logger.warning(f"返回空数据")
+                return pd.DataFrame()
+
+        except Exception as e:
+            logger.error(f"获取失败：{str(e)[:100]}")
+            return pd.DataFrame()
+
+    def get_stock_factors(
+        self,
+        ts_code: str,
+        trade_date: str = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取个股技术因子
+
+        Args:
+            ts_code: 个股代码
+            trade_date: 交易日期
+
+        Returns:
+            DataFrame with factors
+        """
+        logger.info(f"获取 {ts_code} 技术因子...")
+
+        try:
+            # 使用 stk_factor 接口
+            if trade_date:
+                df = self.pro.stk_factor(ts_code=ts_code, trade_date=trade_date)
+            else:
+                df = self.pro.stk_factor(ts_code=ts_code)
+
+            if df is not None and len(df) > 0:
+                logger.info(f"获取成功：{len(df)} 条")
+                return df
+            else:
+                logger.warning(f"返回空数据")
+                return None
+
         except Exception as e:
             logger.error(f"获取失败：{str(e)[:100]}")
             return None

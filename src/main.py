@@ -97,9 +97,9 @@ def main():
     parser = argparse.ArgumentParser(description="A 股热点轮动预测系统")
     parser.add_argument(
         "--mode",
-        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize", "storage", "sync"],
+        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize", "storage", "sync", "portfolio"],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理), sync(同步数据)"
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理), sync(同步数据), portfolio(组合构建)"
     )
     parser.add_argument(
         "--date",
@@ -126,6 +126,12 @@ def main():
         "--train",
         action="store_true",
         help="是否训练模型"
+    )
+    parser.add_argument(
+        "--top-n",
+        type=int,
+        default=10,
+        help="组合持仓股票数量 (portfolio 模式使用)"
     )
     parser.add_argument(
         "--storage-action",
@@ -537,7 +543,6 @@ def main():
             logger.info("执行回测验证")
             from evaluation.backtester import Backtester
             from data.storage_manager import StorageManager
-            import pandas as pd
 
             # 从合并文件加载历史数据
             manager = StorageManager()
@@ -622,7 +627,6 @@ def main():
             logger.info("执行时序交叉验证（Purged K-Fold）")
             from evaluation.backtester import Backtester
             from data.storage_manager import StorageManager
-            import pandas as pd
 
             # 从合并文件加载历史数据
             manager = StorageManager()
@@ -699,6 +703,115 @@ def main():
                     print("-" * 90)
             else:
                 print(f"验证失败：{results.get('error', '未知错误')}")
+
+            print("=" * 70 + "\n")
+
+        elif args.mode == "portfolio":
+            # 组合构建
+            logger.info("执行组合构建...")
+            from agents.portfolio_agent import PortfolioAgent
+
+            agent = PortfolioAgent()
+
+            # 获取板块预测
+            logger.info("Step 1: 获取板块预测...")
+            predict_result = runner.predict_agent.execute(task="predict", horizon="all")
+
+            concept_predictions = None
+            concept_codes = []
+
+            if predict_result.get("success") and predict_result.get("result"):
+                prediction_data = predict_result["result"].get("result", {})
+                if isinstance(prediction_data, dict):
+                    all_predictions = prediction_data.get("predictions", [])
+                    if all_predictions:
+                        # 提取板块代码和预测
+                        concept_predictions = pd.DataFrame(all_predictions)
+                        concept_codes = concept_predictions['concept_code'].tolist()
+                        logger.info(f"获取到 {len(concept_codes)} 个板块预测")
+
+            if not concept_codes:
+                logger.error("无法获取板块预测，请先训练模型")
+                return
+
+            # 过滤：只保留有成分股数据的板块
+            # 直接查询数据库中有成分股的板块
+            from data.database import get_database
+            db = get_database()
+
+            # 查询所有有成分股的板块
+            import sqlite3
+            conn = sqlite3.connect('data/stock.db')
+            cursor = conn.cursor()
+            cursor.execute('SELECT DISTINCT concept_code FROM concept_constituent')
+            available_concepts = [row[0] for row in cursor.fetchall()]
+            conn.close()
+
+            logger.info(f"数据库中有成分股的板块：{available_concepts}")
+
+            # 找出同时在预测结果和成分股中的板块
+            concept_codes_set = set(concept_predictions['concept_code'].unique().tolist())
+            available_set = set(available_concepts)
+            valid_concepts = list(concept_codes_set & available_set)
+
+            logger.info(f"预测结果中有成分股的板块：{valid_concepts}")
+
+            if valid_concepts:
+                # 过滤预测 DataFrame
+                concept_predictions = concept_predictions[
+                    concept_predictions['concept_code'].isin(valid_concepts)
+                ]
+                concept_codes = valid_concepts
+            else:
+                logger.warning("预测结果中的板块都没有成分股数据")
+                logger.info("请使用以下板块测试：{available_concepts}")
+                # 使用有成分股的板块来测试
+                concept_predictions = concept_predictions[
+                    concept_predictions['concept_code'].isin(available_concepts[:3])
+                ]
+                concept_codes = available_concepts[:3]
+
+            # 构建组合
+            logger.info("Step 2: 构建投资组合...")
+            result = agent.run(
+                task="build",
+                concept_codes=concept_codes,
+                concept_predictions=concept_predictions,
+                top_n_stocks=args.top_n
+            )
+
+            # 输出结果
+            print("\n" + "=" * 70)
+            print("投资组合构建结果")
+            print("=" * 70)
+
+            if result.get("success"):
+                portfolio = result.get("portfolio", [])
+                metrics = result.get("metrics", {})
+
+                print(f"\n持仓数量：{len(portfolio)} 只股票")
+
+                print("\n【持仓明细】")
+                print("-" * 100)
+                print(f"{'代码':<12}{'名称':<15}{'权重':<12}{'所属板块':<20}{'1 日预测':<12}{'5 日预测':<12}")
+                print("-" * 100)
+                for pos in portfolio:
+                    print(f"{pos['ts_code']:<12}{pos['stock_name']:<15}{pos['weight']:>10.1%}  {pos['concept_name']:<20}{pos.get('pred_1d', 0):>10.2f}%{pos.get('pred_5d', 0):>10.2f}%")
+                print("-" * 100)
+
+                print("\n【预期指标】")
+                print(f"  预期年化收益：{metrics.get('expected_return', 0):.1%}")
+                print(f"  预期年化波动率：{metrics.get('expected_volatility', 0):.1%}")
+                print(f"  夏普比率：{metrics.get('sharpe', 0):.2f}")
+                print(f"  最大回撤估计：{metrics.get('max_drawdown', 0):.1%}")
+
+                # 风险分析
+                risk = result.get("risk_analysis", {})
+                print("\n【风险分析】")
+                print(f"  板块集中度：{risk.get('sector_concentration', 0):.1%}")
+                print(f"  平均相关性：{risk.get('avg_correlation', 0):.3f}")
+            else:
+                print(f"组合构建失败：{result.get('error', '未知错误')}")
 
             print("=" * 70 + "\n")
 
