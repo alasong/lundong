@@ -87,8 +87,14 @@ python src/main.py --mode list
 # 数据去重（数据库自动去重，无需手动执行）
 python src/main.py --mode dedup
 
-# 采集基础数据（板块列表 + 近期行情）
+# 采集基础数据（板块列表 + 近期行情）- 默认全部板块
 python src/main.py --mode data
+
+# 采集基础数据 - 仅概念板块
+python src/main.py --mode data --sector-type concept
+
+# 采集基础数据 - 仅行业板块
+python src/main.py --mode data --sector-type industry
 
 # 采集历史数据（指定日期范围）
 python src/main.py --mode history --start-date 20230101 --end-date 20241231
