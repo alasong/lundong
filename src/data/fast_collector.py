@@ -494,8 +494,12 @@ class HighSpeedDataCollector:
         # 根据类型筛选板块
         if sector_type == "all":
             # 下载所有主要板块类型（881 行业、882 地区、885 概念）
-            target_codes = indices[indices['ts_code'].str.startswith(('881', '882', '885'), na=False)]
-            logger.info(f"发现 {len(target_codes)} 个板块（行业 + 地区 + 概念）")
+            # 排除北交所板块（87xxxx）
+            target_codes = indices[
+                indices['ts_code'].str.startswith(('881', '882', '885'), na=False) &
+                ~indices['ts_code'].str.startswith('87', na=False)
+            ]
+            logger.info(f"发现 {len(target_codes)} 个板块（行业 + 地区 + 概念，不含北交所）")
             # 细分统计
             industry_count = len(indices[indices['ts_code'].str.startswith('881', na=False)])
             region_count = len(indices[indices['ts_code'].str.startswith('882', na=False)])
@@ -504,8 +508,12 @@ class HighSpeedDataCollector:
             logger.info(f"  - 地区板块 (882): {region_count} 个")
             logger.info(f"  - 概念板块 (885): {concept_count} 个")
         elif sector_type == "concept":
-            target_codes = indices[indices['ts_code'].str.startswith('885', na=False)]
-            logger.info(f"发现 {len(target_codes)} 个概念板块")
+            # 排除北交所板块（87xxxx）
+            target_codes = indices[
+                indices['ts_code'].str.startswith('885', na=False) &
+                ~indices['ts_code'].str.startswith('87', na=False)
+            ]
+            logger.info(f"发现 {len(target_codes)} 个概念板块（不含北交所）")
         elif sector_type == "industry":
             target_codes = indices[indices['ts_code'].str.startswith('881', na=False)]
             logger.info(f"发现 {len(target_codes)} 个行业板块")
@@ -513,9 +521,12 @@ class HighSpeedDataCollector:
             target_codes = indices[indices['ts_code'].str.startswith('882', na=False)]
             logger.info(f"发现 {len(target_codes)} 个地区板块")
         else:
-            # 默认下载所有主要板块
-            target_codes = indices[indices['ts_code'].str.startswith(('881', '882', '885'), na=False)]
-            logger.info(f"发现 {len(target_codes)} 个板块（行业 + 地区 + 概念）")
+            # 默认下载所有主要板块（排除北交所 87xxxx）
+            target_codes = indices[
+                indices['ts_code'].str.startswith(('881', '882', '885'), na=False) &
+                ~indices['ts_code'].str.startswith('87', na=False)
+            ]
+            logger.info(f"发现 {len(target_codes)} 个板块（行业 + 地区 + 概念，不含北交所）")
 
         if concurrent:
             # 使用高并发下载

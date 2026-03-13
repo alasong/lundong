@@ -26,9 +26,12 @@ class TushareTHSClient:
         
         logger.info("Tushare 同花顺客户端初始化完成")
     
-    def get_ths_indices(self) -> pd.DataFrame:
+    def get_ths_indices(self, exclude_bse: bool = True) -> pd.DataFrame:
         """获取同花顺指数列表
-        
+
+        Args:
+            exclude_bse: 是否排除北交所板块（87xxxx）
+
         Returns:
             DataFrame with columns:
             - ts_code: 指数代码
@@ -39,12 +42,16 @@ class TushareTHSClient:
             - type: 类型
         """
         logger.info("获取同花顺指数列表...")
-        
+
         for i in range(self.max_retries):
             try:
                 df = self.pro.ths_index()
                 if df is not None and len(df) > 0:
                     logger.info(f"获取成功：{len(df)} 个指数")
+                    # 排除北交所板块（87xxxx）
+                    if exclude_bse:
+                        df = df[~df['ts_code'].str.startswith('87', na=False)]
+                        logger.info(f"排除北交所板块后：{len(df)} 个指数")
                     return df
                 else:
                     logger.warning("返回空数据")
@@ -56,7 +63,7 @@ class TushareTHSClient:
                 else:
                     logger.error(f"最终失败：{str(e)[:100]}")
                     raise
-        
+
         return pd.DataFrame()
     
     def get_ths_industries(self, level: int = 1) -> pd.DataFrame:
