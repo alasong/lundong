@@ -139,6 +139,12 @@ def main():
         default="verify",
         help="存储管理操作类型 (storage 模式使用)"
     )
+    parser.add_argument(
+        "--sector-type",
+        choices=["all", "concept", "industry"],
+        default="all",
+        help="板块类型 (all/concept/industry) (data/fast 模式使用)"
+    )
 
     args = parser.parse_args()
 
@@ -278,12 +284,12 @@ def main():
             data_agent = DataAgent()
 
             if args.date:
-                logger.info(f"采集单日数据：{args.date}")
-                result = data_agent.execute(task="daily", start_date=args.date)
+                logger.info(f"采集单日数据：{args.date} (板块类型：{args.sector_type})")
+                result = data_agent.execute(task="daily", start_date=args.date, sector_type=args.sector_type)
             else:
                 # 默认更新到最新数据
-                logger.info("采集最新数据（自动判断日期）")
-                result = data_agent.execute(task="daily")
+                logger.info(f"采集最新数据（自动判断日期，板块类型：{args.sector_type}）")
+                result = data_agent.execute(task="daily", sector_type=args.sector_type)
             print(f"数据采集结果：{result}")
 
         elif args.mode == "history":

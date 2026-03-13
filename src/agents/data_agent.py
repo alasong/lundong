@@ -42,6 +42,7 @@ class DataAgent(BaseAgent):
         task: str = "daily",
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        sector_type: str = "all",
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -51,9 +52,10 @@ class DataAgent(BaseAgent):
             task: 任务类型 daily/history/basic/lists
             start_date: 开始日期
             end_date: 结束日期
+            sector_type: 板块类型 (all/concept/industry)
         """
         if task == "daily":
-            return self._collect_daily(start_date)
+            return self._collect_daily(start_date, sector_type)
         elif task == "history":
             return self._collect_history(start_date, end_date, **kwargs)
         elif task == "basic":
@@ -96,8 +98,13 @@ class DataAgent(BaseAgent):
         logger.info(f"列表数据采集完成：{results}")
         return results
 
-    def _collect_daily(self, trade_date: Optional[str] = None) -> Dict:
-        """采集每日数据"""
+    def _collect_daily(self, trade_date: Optional[str] = None, sector_type: str = "all") -> Dict:
+        """采集每日数据
+
+        Args:
+            trade_date: 交易日期
+            sector_type: 板块类型 (all/concept/industry)
+        """
         # 默认获取最新数据（自动判断日期）
         if trade_date is None:
             from data.storage_manager import StorageManager
@@ -127,7 +134,7 @@ class DataAgent(BaseAgent):
         results.update(list_results)
 
         # 使用高速采集器更新数据
-        logger.info(f"开始更新数据：{start_date} - {trade_date}")
+        logger.info(f"开始更新数据：{start_date} - {trade_date} (板块类型：{sector_type})")
         try:
             from data.fast_collector import HighSpeedDataCollector
             from core.settings import settings as core_settings
@@ -137,8 +144,23 @@ class DataAgent(BaseAgent):
                 max_workers=10
             )
 
-            # 获取板块列表
-            indices = collector.client.get_ths_indices()
+            # 获取板块列表（根据类型筛选）
+            indices = collector.client.get_ths_indices(exclude_bse=True)
+
+            # 根据 sector_type 筛选板块
+            if sector_type == "concept":
+                indices = indices[indices['ts_code'].str.startswith('885', na=False)]
+                logger.info(f"筛选概念板块：{len(indices)} 个")
+            elif sector_type == "industry":
+                indices = indices[indices['ts_code'].str.startswith('881', na=False)]
+                logger.info(f"筛选行业板块：{len(indices)} 个")
+            else:
+                # all - 包括 881 行业、882 地区、885 概念（已排除 87 北交所）
+                indices = indices[
+                    indices['ts_code'].str.startswith(('881', '882', '885'), na=False)
+                ]
+                logger.info(f"全部板块（行业 + 地区 + 概念）：{len(indices)} 个")
+
             codes = indices['ts_code'].tolist()
 
             # 批量下载（直接写入数据库）
