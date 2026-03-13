@@ -120,7 +120,7 @@ def main():
         "--sector-type",
         choices=["all", "concept", "industry", "region"],
         default="all",
-        help="板块类型 (all/concept/industry/region) (fast 模式使用)"
+        help="板块类型 (all/concept/industry/region) (data/fast 模式使用)"
     )
     parser.add_argument(
         "--train",
@@ -138,12 +138,6 @@ def main():
         choices=["verify", "cleanup", "stats"],
         default="verify",
         help="存储管理操作类型 (storage 模式使用)"
-    )
-    parser.add_argument(
-        "--sector-type",
-        choices=["all", "concept", "industry"],
-        default="all",
-        help="板块类型 (all/concept/industry) (data/fast 模式使用)"
     )
 
     args = parser.parse_args()
