@@ -163,8 +163,13 @@ class DataAgent(BaseAgent):
 
             codes = indices['ts_code'].tolist()
 
+            # 过滤无效板块（ths_daily 接口不支持的）
+            logger.info("过滤无效板块（Tushare 接口不支持的）...")
+            valid_codes = collector.filter_valid_codes(codes)
+            logger.info(f"过滤后剩余 {len(valid_codes)} 个板块")
+
             # 批量下载（直接写入数据库）
-            collector.download_batch(codes, start_date, trade_date)
+            collector.download_batch(valid_codes, start_date, trade_date)
 
             results["status"] = "success"
             results["downloaded"] = collector.downloaded_count

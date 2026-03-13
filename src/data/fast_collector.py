@@ -44,6 +44,7 @@ class HighSpeedDataCollector:
         self.missing_filled = 0
         self._lock = Lock()
         self._request_times = []  # 记录请求时间用于限流
+        self._invalid_codes: Set[str] = set()  # 记录返回空数据的无效板块
 
         # 创建输出目录（用于导出 CSV）
         os.makedirs(settings.raw_data_dir, exist_ok=True)
@@ -196,6 +197,54 @@ class HighSpeedDataCollector:
 
         return days_diff > 3
 
+    def _check_code_valid(self, ts_code: str) -> bool:
+        """
+        检查板块代码是否有效（ths_daily 接口是否返回数据）
+
+        Args:
+            ts_code: 板块代码
+
+        Returns:
+            是否有效
+        """
+        try:
+            # 已经记录为无效的板块直接返回 False
+            if ts_code in self._invalid_codes:
+                return False
+
+            # 测试获取 1 天数据
+            df = self.client.pro.ths_daily(
+                ts_code=ts_code,
+                start_date=(datetime.now() - timedelta(days=10)).strftime('%Y%m%d'),
+                end_date=(datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
+            )
+            return df is not None and len(df) > 0
+        except Exception:
+            return False
+
+    def filter_valid_codes(self, codes: List[str]) -> List[str]:
+        """
+        过滤掉无效的板块代码（ths_daily 接口不支持的）
+
+        Args:
+            codes: 板块代码列表
+
+        Returns:
+            有效的板块代码列表
+        """
+        logger.info(f"检查板块代码有效性（共 {len(codes)} 个）...")
+        valid_codes = []
+        invalid_count = 0
+
+        for code in codes:
+            if self._check_code_valid(code):
+                valid_codes.append(code)
+            else:
+                invalid_count += 1
+
+        logger.info(f"有效板块：{len(valid_codes)} 个，无效板块：{invalid_count} 个")
+        return valid_codes
+
     def _download_single(self, code: str, name: str, start_date: str, end_date: str) -> bool:
         """
         下载单个板块数据并写入数据库
@@ -288,7 +337,9 @@ class HighSpeedDataCollector:
                         logger.debug(f"下载完成：{code} ({name}) - {len(df)} 条记录")
                         return True
                     else:
-                        logger.warning(f"空数据：{code}")
+                        logger.debug(f"空数据（Tushare 接口不支持）：{code} - {name}")
+                        # 记录无效板块到列表，后续可过滤
+                        self._invalid_codes.add(code)
                         return False
 
                 except Exception as e:
