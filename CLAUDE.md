@@ -1,231 +1,207 @@
-# CLAUDE.md
+# CLAUDE.md - 系统上下文索引
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+> 本文档帮助 Claude 快速理解项目架构和定位关键代码。
 
-## Project Overview
+---
 
-A 股热点轮动预测系统 (A-Share Sector Rotation Prediction System) - A machine learning-based system for analyzing and predicting sector rotation patterns in the Chinese A-share stock market.
+## 系统架构
 
-## Quick Start
-
-### Setup
-
-```bash
-cd /home/song/lundong
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+```
+┌────────────────────────────────────────────────────────────────┐
+│                        CLI (main.py)                           │
+│                    17 种运行模式入口                             │
+└────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌────────────────────────────────────────────────────────────────┐
+│                   Runner (runner.py)                           │
+│                     工作流编排器                                 │
+└────────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        ▼                     ▼                     ▼
+┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+│  agents/      │    │  analysis/    │    │  models/      │
+│  Agent 层     │───▶│  分析层       │───▶│  模型层       │
+│  业务编排     │    │  热点+轮动     │    │  XGBoost      │
+└───────────────┘    └───────────────┘    └───────────────┘
+        │                                        │
+        ▼                                        ▼
+┌───────────────┐                       ┌───────────────┐
+│  data/        │                       │  portfolio/   │
+│  数据层       │                       │  组合优化     │
+│  DB+API       │                       │  风险控制     │
+└───────────────┘                       └───────────────┘
 ```
 
-### Environment Configuration
+---
 
-Create `.env` file:
+## 模块文档索引
+
+| 模块 | 文档 | 核心职责 |
+|------|------|----------|
+| **Agent 层** | [src/agents/CLAUDE.md](src/agents/CLAUDE.md) | 业务编排、工作流控制 |
+| **数据层** | [src/data/CLAUDE.md](src/data/CLAUDE.md) | 数据采集、存储、验证 |
+| **模型层** | [src/models/CLAUDE.md](src/models/CLAUDE.md) | 特征工程、预测模型 |
+| **分析层** | [src/analysis/CLAUDE.md](src/analysis/CLAUDE.md) | 热点识别、轮动分析 |
+| **组合优化** | [src/portfolio/CLAUDE.md](src/portfolio/CLAUDE.md) | 股票筛选、权重优化 |
+| **评估模块** | [src/evaluation/CLAUDE.md](src/evaluation/CLAUDE.md) | 回测、交叉验证 |
+
+---
+
+## 关键文件速查
+
+### 入口文件
+
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `src/main.py` | 946 | CLI 入口，17 种模式 |
+| `src/runner.py` | 259 | 工作流编排 |
+| `src/config.py` | 68 | 配置管理 |
+
+### 核心模块
+
+| 文件 | 行数 | 职责 | 修改注意 |
+|------|------|------|----------|
+| `src/data/database.py` | 1069 | SQLite 管理、WAL 模式 | 连接池、并发安全 |
+| `src/models/predictor.py` | 728 | XGBoost 预测器 | 特征工程是核心 |
+| `src/data/stock_screener.py` | 742 | 个股筛选 | 筛选规则影响组合 |
+| `src/data/fast_collector.py` | 675 | 高速采集 | API 限流处理 |
+
+---
+
+## 数据流向
+
+```
+Tushare API
+     │
+     ▼ (采集)
+┌─────────────┐
+│   SQLite    │  ◀── 主存储 (WAL 模式)
+│  stock.db   │
+└─────────────┘
+     │
+     ▼ (导出)
+┌─────────────┐
+│    CSV      │  ◀── 备份/分析用
+│  merged_*   │
+└─────────────┘
+     │
+     ▼ (加载)
+┌─────────────┐
+│  DataFrame  │  ◀── 内存处理
+└─────────────┘
+     │
+     ▼ (特征)
+┌─────────────┐
+│  Features   │  ◀── 65+ 特征
+└─────────────┘
+     │
+     ▼ (预测)
+┌─────────────┐
+│ Predictions │  ◀── 1d/5d/20d
+└─────────────┘
+```
+
+---
+
+## 常见修改场景
+
+### 1. 添加新的数据源
+
+1. 在 `src/data/` 创建新的 client 文件
+2. 在 `DataAgent` 中添加采集方法
+3. 更新 `database.py` 表结构（如需要）
+
+### 2. 添加新的预测特征
+
+1. 修改 `src/models/predictor.py` 的 `_process_single_concept_vectorized()`
+2. 确保特征长度一致
+3. 重新训练模型
+
+### 3. 修改热点评分权重
+
+1. 修改 `src/config.py` 中的 `hotspot_weights`
+2. 或修改 `src/analysis/hotspot_detector.py`
+
+### 4. 添加新的运行模式
+
+1. 在 `src/main.py` 添加 argparse 参数
+2. 在 `main()` 函数添加处理分支
+3. 更新 README.md
+
+### 5. 修改组合约束
+
+1. 修改 `src/portfolio/optimizer.py`
+2. 调整 `max_position`、`max_sector` 参数
+
+---
+
+## 配置要点
+
+### 环境变量 (.env)
+
 ```bash
-TUSHARE_TOKEN=your_tushare_token_here
-DASHSCOPE_API_KEY=your_dashscope_key_here  # Optional, for LLM features
+TUSHARE_TOKEN=xxx      # 必需，Tushare API Token
 DATABASE_URL=sqlite:///data/stock.db
 LOG_LEVEL=INFO
 ```
 
-### Running the System
-
-```bash
-# Full daily workflow (data collection + analysis + prediction)
-python src/main.py --mode daily --train
-
-# Quick analysis (use existing data)
-python src/main.py --mode quick
-
-# Train model only
-python src/main.py --mode train
-
-# Collect historical data
-python src/main.py --mode history --start-date 20230101 --end-date 20231231
-
-# Collect daily data
-python src/main.py --mode data
-```
-
-### Testing
-
-```bash
-# Run simple test
-python test_simple.py
-
-# Run with pytest
-pytest tests/
-```
-
-## Architecture
-
-```
-src/
-├── main.py              # Entry point
-├── config.py            # Configuration (Settings class)
-├── runner.py            # Workflow orchestrator (SimpleRunner)
-│
-├── agents/              # Agent layer
-│   ├── base_agent.py    # Base agent class
-│   ├── data_agent.py    # Data collection agent
-│   ├── analysis_agent.py # Hotspot analysis agent
-│   └── predict_agent.py # Prediction agent
-│
-├── analysis/            # Core analysis
-│   ├── hotspot_detector.py    # Hotspot detection
-│   ├── rotation_analyzer.py   # Rotation pattern analysis
-│   └── pattern_learner.py     # Pattern learning
-│
-├── data/                # Data layer
-│   ├── tushare_client.py       # Tushare API client (East Money)
-│   ├── tushare_ths_client.py   # Tushare THS client (Tonghuashun)
-│   ├── data_collector.py       # Data collection orchestrator
-│   └── feature_engineer.py     # Feature engineering
-│
-├── models/              # Prediction models
-│   └── predictor.py     # XGBoost-based predictor
-│
-├── evaluation/          # Model evaluation
-│   └── metrics.py       # Evaluation metrics
-│
-├── learning/            # Learning module
-│   └── rotation_learner.py # Rotation pattern learner
-│
-├── core/                # Core utilities
-│   └── settings.py      # Core settings
-│
-└── utils/               # Utilities
-    └── logger.py        # Logging utilities
-```
-
-## Key Components
-
-### Data Sources
-
-| Source | Client Class | Purpose |
-|--------|-------------|---------|
-| Tushare Pro (East Money) | `TushareClient` | East Money sector/concept data |
-| Tushare Pro (Tonghuashun) | `TushareTHSClient` | Tonghuashun sector/index data |
-
-### Data Collection Modes
-
-| Task | Description | Command |
-|------|-------------|---------|
-| `lists` | Collect sector/concept lists | `agent.run(task="lists")` |
-| `daily` | Collect daily data | `agent.run(task="daily")` |
-| `history` | Collect historical data | `agent.run(task="history", start_date, end_date)` |
-| `basic` | Collect basic data | `agent.run(task="basic")` |
-
-### Running Modes
-
-| Mode | Description | Command |
-|------|-------------|---------|
-| `daily` | Daily workflow | `--mode daily --train` |
-| `quick` | Quick analysis | `--mode quick` |
-| `train` | Train model | `--mode train` |
-| `data` | Data collection | `--mode data` |
-| `history` | Historical data collection | `--mode history --start-date X --end-date Y` |
-
-## Data Directory Structure
-
-```
-data/
-├── raw/          # Raw CSV data from Tushare
-├── processed/    # Processed data
-├── features/     # Feature engineering results
-├── models/       # Trained models
-└── results/      # Analysis results
-```
-
-## Configuration
-
-Key settings in `src/config.py`:
+### 关键配置 (src/config.py)
 
 ```python
-class Settings(BaseSettings):
-    # API tokens
-    tushare_token: str
-    dashscope_api_key: str
+hotspot_weights = {
+    "price_strength": 0.30,
+    "money_strength": 0.25,
+    "sentiment_strength": 0.20,
+    "persistence": 0.15,
+    "market_position": 0.10,
+}
 
-    # Data paths
-    data_dir: str = "data"
-    raw_data_dir: str = "data/raw"
-
-    # Hotspot weights
-    hotspot_weights: dict = {
-        "price_strength": 0.30,
-        "money_strength": 0.25,
-        "sentiment_strength": 0.20,
-        "persistence": 0.15,
-        "market_position": 0.10,
-    }
-
-    # Prediction horizons
-    prediction_horizons: dict = {
-        "short_term": 1,
-        "mid_term": 5,
-        "long_term": 20,
-    }
+prediction_horizons = {
+    "short_term": 1,   # 1 日
+    "mid_term": 5,     # 5 日
+    "long_term": 20,   # 20 日
+}
 ```
 
-## Development
+---
 
-### Code Style
+## 调试命令
 
-- Python 3.12+
-- Type hints recommended
-- Loguru for logging
+```python
+# 查看数据库统计
+from data.database import get_database
+db = get_database()
+db.get_statistics()
 
-### Pre-commit Hooks
+# 测试 Agent
+from agents.predict_agent import PredictAgent
+agent = PredictAgent()
+result = agent.execute(task="predict")
+
+# 查看特征重要性
+from models.predictor import UnifiedPredictor
+p = UnifiedPredictor()
+p.print_feature_importance(top_n=20)
+```
+
+---
+
+## 测试文件
 
 ```bash
-# Install pre-commit
-pip install pre-commit
-pre-commit install
+# 运行测试
+python -m pytest tests/ -v
 
-# Run manually
-pre-commit run --all-files
+# 单独测试
+python test_simple.py
+python -m pytest tests/test_prediction.py -v
 ```
 
-## Tushare API Reference
+---
 
-### East Money Interfaces (dc_*)
-- `dc_concept()` - Concept list (5000 concepts)
-- `dc_index()` - Sector list (5000 sectors)
-- `dc_member()` - Sector constituents
-- `dc_daily()` - Sector daily quotes (primary)
+## 相关文档
 
-### Tonghuashun Interfaces (ths_*)
-- `ths_index()` - THS index list
-- `ths_industry()` - THS industry classification
-- `ths_daily()` - THS daily quotes
-
-### Backup Interfaces
-- `index_daily()` - Index daily quotes (backup for dc_daily)
-
-## Troubleshooting
-
-### Missing TUSHARE_TOKEN
-```bash
-# Check .env file
-cat .env | grep TUSHARE_TOKEN
-
-# Set environment variable
-export TUSHARE_TOKEN=your_token
-```
-
-### dc_daily Returns Empty Data
-The system automatically falls back to `index_daily()` interface when `dc_daily()` returns empty data.
-
-### Permission Issues
-Ensure Tushare account has >= 5000 points for accessing sector/concept data.
-
-## Related Documentation
-
-- `README.md` - Project overview and quick start
-- `ARCHITECTURE.md` - Detailed architecture documentation
-- `QUICKSTART.md` - Quick start guide
-- `TUSHARE_QUICKSTART.md` - Tushare setup guide
-
-## Disclaimer
-
-This system is for research and educational purposes only. It does not constitute investment advice. The stock market involves risks; invest cautiously.
+- `README.md` - 用户使用指南
+- `ARCHITECTURE.md` - 架构详解
