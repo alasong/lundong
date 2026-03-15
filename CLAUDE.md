@@ -201,6 +201,41 @@ python -m pytest tests/test_prediction.py -v
 
 ---
 
+## Auto Coding 配置
+
+### 自动化规则
+
+当执行编码任务时，自动遵循以下规则：
+
+1. **代码修改后自动验证**
+   - Python 文件保存后自动运行 `py_compile` 语法检查
+   - 测试文件修改后自动运行相关测试
+
+2. **Git 操作规范**
+   - 提交前自动检查测试是否通过
+   - 提交信息格式：`<type>: <description>`
+   - 类型：feat/fix/refactor/test/docs/style
+
+3. **代码风格**
+   - 使用 Python 3.12+ 特性
+   - 类型注解推荐但非强制
+   - 遵循现有代码风格
+
+### 自动化命令
+
+```bash
+# 自动测试
+python -m pytest tests/ -v
+
+# 自动格式化（可选）
+black src/ --check
+
+# 自动类型检查（可选）
+mypy src/ --ignore-missing-imports
+```
+
+---
+
 ## 相关文档
 
 - `README.md` - 用户使用指南

@@ -1,0 +1,88 @@
+{
+  "$schema": "https://claude.ai/schema/settings.json",
+  "project": {
+    "name": "lundong",
+    "description": "A股热点轮动预测系统"
+  },
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[AUTO] 执行命令: $CLAUDE_TOOL_INPUT'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -m py_compile $CLAUDE_TOOL_INPUT_PATH 2>/dev/null && echo '[AUTO] 语法检查通过'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[AUTO] 任务完成'"
+          }
+        ]
+      }
+    ]
+  },
+
+  "permissions": {
+    "allow": [
+      "Bash(python*)",
+      "Bash(pip*)",
+      "Bash(ls*)",
+      "Bash(cat*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Read(*)",
+      "Write(src/*)",
+      "Edit(*)",
+      "Glob(*)",
+      "Grep(*)"
+    ],
+    "deny": [
+      "Bash(rm -rf /*)",
+      "Bash(sudo*)",
+      "Bash(chmod 777*)"
+    ]
+  },
+
+  // "autoMode": {
+  //   "enabled": true,
+  //   "autoCommit": true,           // 启用自动提交
+  //   "autoPush": false,            // 不自动推送
+  //   "autoTest": true,
+  //   "testOnSave": true            // 保存时自动测试
+  // }
+  // "autoMode": {
+  //   "enabled": true,
+  //   "maxSteps": 50,
+  //   "autoCommit": false,
+  //   "autoTest": true,
+  //   "testCommand": "python -m pytest tests/ -v --tb=short"
+  // }
+  "autoMode": {
+    "enabled": true,
+    "maxSteps": 50,
+    "autoCommit": true,
+    "autoPush": true,
+    "autoTest": true,
+    "testCommand": "python -m pytest tests/ -v --tb=short"
+  }
+}
