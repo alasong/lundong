@@ -201,11 +201,95 @@ python -m pytest tests/test_prediction.py -v
 
 ---
 
-## Auto Coding 配置
+## Subagents 子代理配置
+
+### 可用 Subagents
+
+| 名称 | 用途 | 模型 | 调用示例 |
+|------|------|------|----------|
+| `data-explorer` | 数据层调试 | Sonnet | "使用 data-explorer 检查数据库" |
+| `model-trainer` | 模型训练 | Sonnet | "使用 model-trainer 训练模型" |
+| `test-runner` | 测试执行 | Haiku | "使用 test-runner 运行测试" |
+| `code-reviewer` | 代码审查 | Sonnet | "使用 code-reviewer 审查代码" |
+| `doc-writer` | 文档撰写 | Haiku | "使用 doc-writer 更新文档" |
+
+### 高效使用方式
+
+**1. 并行执行**（独立任务同时运行）
+```
+"并行执行：
+1. data-explorer: 数据质量报告
+2. test-runner: 运行测试
+3. code-reviewer: 代码审查"
+```
+
+**2. 串行工作流**（有依赖的任务按顺序执行）
+```
+"先运行 test-runner 找失败测试，
+再用 model-trainer 修复，
+最后用 test-runner 验证"
+```
+
+**3. 模型选择策略**
+- **Sonnet**: 复杂分析、代码修改、深度诊断
+- **Haiku**: 快速查询、简单任务、批量执行
+
+### 配置文件
+
+```
+.claude/
+├── settings.json          # subagent 定义
+└── subagents/
+    ├── README.md          # 使用指南
+    ├── data-explorer.md   # 数据层专家
+    ├── model-trainer.md   # 模型训练专家
+    ├── test-runner.md     # 测试执行专家
+    ├── code-reviewer.md   # 代码审查专家
+    └── doc-writer.md      # 文档撰写专家
+```
+
+---
+
+## Auto Coding 高级配置
+
+### 项目配置文件
+
+| 文件 | 作用 |
+|------|------|
+| `.claude/settings.json` | 主配置：hooks、权限、subagents、自动模式 |
+| `.claude/subagents/` | 子代理定义文件 |
+| `.claude/skills/` | 自定义技能定义 |
+| `.claude/memory/` | 项目记忆持久化 |
+| `scripts/workflow.py` | 自动化工作流脚本 |
+
+### 自动化 Hooks
+
+```
+PreToolUse  → 执行前日志
+PostToolUse → 文件修改后语法检查、模块提示
+PreCommit   → 提交前测试+代码检查
+Stop        → 任务完成提示+git status
+```
+
+### 自定义 Skills
+
+```bash
+/train-model     # 训练预测模型
+/collect-data    # 采集最新数据
+/run-prediction  # 执行预测生成报告
+/run-tests       # 运行测试套件
+/db-stats        # 查看数据库状态
+```
+
+### 文件变更自动测试
+
+| 文件路径 | 自动测试 |
+|----------|----------|
+| `src/data/*.py` | `tests/test_database.py` |
+| `src/models/*.py` | `tests/test_prediction.py` |
+| `src/agents/*.py` | `tests/test_agents.py` |
 
 ### 自动化规则
-
-当执行编码任务时，自动遵循以下规则：
 
 1. **代码修改后自动验证**
    - Python 文件保存后自动运行 `py_compile` 语法检查
@@ -221,18 +305,32 @@ python -m pytest tests/test_prediction.py -v
    - 类型注解推荐但非强制
    - 遵循现有代码风格
 
-### 自动化命令
+### 工作流脚本
 
 ```bash
-# 自动测试
-python -m pytest tests/ -v
+# 语法检查
+python scripts/workflow.py syntax src/main.py
 
-# 自动格式化（可选）
-black src/ --check
+# 运行测试
+python scripts/workflow.py test
 
-# 自动类型检查（可选）
-mypy src/ --ignore-missing-imports
+# 训练模型
+python scripts/workflow.py train
+
+# 采集数据
+python scripts/workflow.py collect
+
+# 执行预测
+python scripts/workflow.py predict
 ```
+
+### 自动模式配置
+
+当前配置：
+- `maxSteps: 100` - 最大自动步骤
+- `autoCommit: true` - 自动提交
+- `autoPush: false` - 不自动推送
+- `autoTest: true` - 自动运行测试
 
 ---
 

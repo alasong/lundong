@@ -2,7 +2,8 @@
   "$schema": "https://claude.ai/schema/settings.json",
   "project": {
     "name": "lundong",
-    "description": "A股热点轮动预测系统"
+    "description": "A股热点轮动预测系统",
+    "version": "1.0.0"
   },
 
   "hooks": {
@@ -12,29 +13,52 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '[AUTO] 执行命令: $CLAUDE_TOOL_INPUT'"
+            "command": "echo '[HOOK] 执行: $(echo \"$CLAUDE_TOOL_INPUT\" | head -c 100)'"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[HOOK] 修改文件: $CLAUDE_TOOL_INPUT_PATH'"
           }
         ]
       }
     ],
+
     "PostToolUse": [
       {
         "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "python -m py_compile $CLAUDE_TOOL_INPUT_PATH 2>/dev/null && echo '[AUTO] 语法检查通过'"
+            "command": "if [[ \"$CLAUDE_TOOL_INPUT_PATH\" == *.py ]]; then python -m py_compile \"$CLAUDE_TOOL_INPUT_PATH\" 2>&1 && echo '[AUTO] ✓ 语法检查通过' || echo '[AUTO] ✗ 语法错误'; fi"
           }
         ]
       }
     ],
+
+    "PreCommit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[HOOK] Pre-commit: 运行测试...' && python -m pytest tests/ -v --tb=short -q 2>&1 | tail -5"
+          }
+        ]
+      }
+    ],
+
     "Stop": [
       {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "echo '[AUTO] 任务完成'"
+            "command": "echo '[AUTO] 任务完成！' && git status --short 2>/dev/null | head -10"
           }
         ]
       }
@@ -46,43 +70,106 @@
       "Bash(python*)",
       "Bash(pip*)",
       "Bash(ls*)",
-      "Bash(cat*)",
       "Bash(git status*)",
       "Bash(git diff*)",
       "Bash(git log*)",
+      "Bash(git add*)",
       "Read(*)",
       "Write(src/*)",
+      "Write(tests/*)",
       "Edit(*)",
       "Glob(*)",
-      "Grep(*)"
+      "Grep(*)",
+      "Agent(*)"
     ],
     "deny": [
       "Bash(rm -rf /*)",
-      "Bash(sudo*)",
-      "Bash(chmod 777*)"
+      "Bash(sudo*)"
     ]
   },
 
-  // "autoMode": {
-  //   "enabled": true,
-  //   "autoCommit": true,           // 启用自动提交
-  //   "autoPush": false,            // 不自动推送
-  //   "autoTest": true,
-  //   "testOnSave": true            // 保存时自动测试
-  // }
-  // "autoMode": {
-  //   "enabled": true,
-  //   "maxSteps": 50,
-  //   "autoCommit": false,
-  //   "autoTest": true,
-  //   "testCommand": "python -m pytest tests/ -v --tb=short"
-  // }
   "autoMode": {
     "enabled": true,
-    "maxSteps": 50,
+    "maxSteps": 100,
     "autoCommit": true,
-    "autoPush": true,
+    "autoPush": false,
     "autoTest": true,
-    "testCommand": "python -m pytest tests/ -v --tb=short"
+    "testCommand": "python -m pytest tests/ -v --tb=short -x"
+  },
+
+  "subagents": {
+    "definitions": [
+      {
+        "name": "data-explorer",
+        "description": "数据层探索和调试专家，熟悉 database.py、fast_collector.py、stock_screener.py",
+        "model": "sonnet",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "systemPrompt": "你是 lundong 项目的数据层专家。熟悉 SQLite 数据库、Tushare API、数据采集流程。负责：1) 数据库查询和调试 2) 数据采集问题排查 3) 数据质量验证。输出简洁准确。"
+      },
+      {
+        "name": "model-trainer",
+        "description": "模型训练专家，熟悉 predictor.py、特征工程、XGBoost 调参",
+        "model": "sonnet",
+        "tools": ["Read", "Glob", "Grep", "Bash", "Write", "Edit"],
+        "systemPrompt": "你是 lundong 项目的模型训练专家。熟悉 XGBoost、LightGBM、特征工程、时间序列预测。负责：1) 模型训练和调参 2) 特征工程优化 3) 模型评估和诊断。修改代码前先备份。"
+      },
+      {
+        "name": "test-runner",
+        "description": "测试执行专家，运行测试、分析失败、生成报告",
+        "model": "sonnet",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "systemPrompt": "你是 lundong 项目的测试专家。负责：1) 运行测试套件 2) 分析失败原因 3) 生成测试报告。输出简洁，重点关注失败的测试。"
+      },
+      {
+        "name": "code-reviewer",
+        "description": "代码审查专家，检查代码质量、安全漏洞、性能问题",
+        "model": "sonnet",
+        "tools": ["Read", "Glob", "Grep"],
+        "systemPrompt": "你是 lundong 项目的代码审查专家。检查：1) 代码质量和可维护性 2) 潜在 bug 和安全问题 3) 性能瓶颈。输出结构化的审查报告，按严重程度排序。"
+      },
+      {
+        "name": "doc-writer",
+        "description": "文档撰写专家，更新 CLAUDE.md、README、代码注释",
+        "model": "sonnet",
+        "tools": ["Read", "Write", "Edit"],
+        "systemPrompt": "你是 lundong 项目的文档专家。负责：1) 更新 CLAUDE.md 多层文档 2) 维护 README 3) 编写代码注释。文档风格简洁准确，使用中文。"
+      }
+    ],
+    "orchestration": {
+      "parallel": true,
+      "maxConcurrent": 3,
+      "timeout": 300000
+    }
+  },
+
+  "skills": {
+    "projectSpecific": [
+      {
+        "name": "parallel-analysis",
+        "description": "并行分析多个模块",
+        "prompt": "使用 subagents 并行分析：\n1. data-explorer: 检查数据库状态和数据质量\n2. model-trainer: 检查模型状态和训练结果\n3. test-runner: 运行测试并报告结果\n汇总三个 agent 的分析结果。"
+      },
+      {
+        "name": "full-review",
+        "description": "完整代码审查",
+        "prompt": "使用 code-reviewer subagent 对最近修改的文件进行完整审查，生成审查报告。"
+      },
+      {
+        "name": "quick-fix",
+        "description": "快速修复并测试",
+        "prompt": "使用以下流程：\n1. 分析问题\n2. 使用 model-trainer 或 data-explorer 修复\n3. 使用 test-runner 验证修复"
+      },
+      {
+        "name": "update-docs",
+        "description": "更新项目文档",
+        "prompt": "使用 doc-writer subagent 更新项目文档，包括 CLAUDE.md 和 README.md。"
+      }
+    ]
+  },
+
+  "memory": {
+    "enabled": true,
+    "path": ".claude/memory",
+    "autoSave": true
   }
 }

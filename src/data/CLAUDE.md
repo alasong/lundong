@@ -93,8 +93,23 @@ ON concept_constituent(concept_code, weight DESC);
 
 **修改注意**:
 - 修改表结构需更新 `_create_tables()`
-- 新增表需同步更新 `get_statistics()`
+- 新增表需同步更新 `get_statistics()` 和 `VALID_TABLES` 白名单
 - 保持 WAL 模式以支持高并发
+
+**安全机制**:
+```python
+# 表名白名单 - 防止 SQL 注入
+VALID_TABLES = frozenset([
+    'concept_daily', 'concept_info', 'stock_daily',
+    'trade_calendar', ...
+])
+
+# 列名验证 - 只允许字母、数字、下划线
+_validate_identifier(column_name, "列名")
+
+# 表名验证 - 必须在白名单中
+_validate_table_name(table_name)
+```
 
 ---
 

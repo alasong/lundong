@@ -31,6 +31,21 @@ class SQLiteDatabase:
     - 支持增量更新和断点续传
     """
 
+    # 表名白名单 - 防止 SQL 注入
+    VALID_TABLES = frozenset([
+        'concept_daily',
+        'concept_info',
+        'industry_info',
+        'collect_task',
+        'stock_daily',
+        'concept_constituent',
+        'stock_factors',
+        'trade_calendar',
+        'concept_daily_archive',
+        'stock_daily_archive',
+        'stock_daily_basic',
+    ])
+
     def __init__(self, db_path: str = None, pool_size: int = 5):
         """
         初始化数据库
@@ -358,6 +373,59 @@ class SQLiteDatabase:
             if conn:
                 self._pool.put(conn)
 
+    @staticmethod
+    def _validate_identifier(identifier: str, identifier_type: str = "identifier") -> str:
+        """
+        验证标识符（表名/列名）安全性，防止 SQL 注入
+
+        Args:
+            identifier: 要验证的标识符
+            identifier_type: 标识符类型（用于错误消息）
+
+        Returns:
+            验证通过的标识符
+
+        Raises:
+            ValueError: 标识符不合法时抛出
+        """
+        import re
+
+        if not identifier:
+            raise ValueError(f"{identifier_type} 不能为空")
+
+        # 只允许字母、数字、下划线，且不能以数字开头
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', identifier):
+            raise ValueError(
+                f"无效的 {identifier_type}: '{identifier}'。"
+                f"只允许字母、数字、下划线，且不能以数字开头"
+            )
+
+        # 长度限制
+        if len(identifier) > 128:
+            raise ValueError(f"{identifier_type} 长度不能超过 128 字符")
+
+        return identifier
+
+    def _validate_table_name(self, table: str) -> str:
+        """
+        验证表名（白名单检查）
+
+        Args:
+            table: 表名
+
+        Returns:
+            验证通过的表名
+
+        Raises:
+            ValueError: 表名不在白名单中时抛出
+        """
+        if table not in self.VALID_TABLES:
+            raise ValueError(
+                f"无效的表名: '{table}'。"
+                f"允许的表: {', '.join(sorted(self.VALID_TABLES))}"
+            )
+        return table
+
     def batch_insert(
         self,
         table: str,
@@ -369,20 +437,34 @@ class SQLiteDatabase:
         批量插入数据（优化：事务批量提交）
 
         Args:
-            table: 表名
+            table: 表名（必须是白名单中的有效表名）
             data: 数据列表，每个元素为 dict
             replace: True=覆盖重复，False=跳过重复
             batch_size: 每批提交的记录数
 
         Returns:
             插入/更新的记录数
+
+        Raises:
+            ValueError: 表名或列名不合法时抛出
         """
+        # 输入验证
         if not data:
             return 0
 
+        if not data[0]:
+            raise ValueError("数据字典不能为空")
+
+        # 安全检查：验证表名（白名单）
+        table = self._validate_table_name(table)
+
+        # 安全检查：验证列名（防止 SQL 注入）
+        columns = list(data[0].keys())
+        for col in columns:
+            self._validate_identifier(col, "列名")
+
         with self.get_connection() as conn:
             try:
-                columns = list(data[0].keys())
                 placeholders = ','.join(['?' for _ in columns])
                 col_names = ','.join(columns)
 
