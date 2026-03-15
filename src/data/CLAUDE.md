@@ -9,7 +9,7 @@
 ```
 src/data/
 ├── __init__.py
-├── database.py           # SQLite 数据库 (1069 行) ⭐ 核心
+├── database.py           # SQLite 数据库 (1534 行) ⭐ 核心
 ├── fast_collector.py     # 高速采集 (675 行) ⭐ 核心
 ├── tushare_ths_client.py # 同花顺 API 客户端
 ├── stock_screener.py     # 个股筛选 (742 行) ⭐ 核心
@@ -32,24 +32,27 @@ src/data/
 
 **职责**: SQLite 数据库管理，支持高并发写入
 
-**关键配置**:
+### PRAGMA 优化配置
 ```python
 # WAL 模式 - 读写不阻塞
 conn.execute("PRAGMA journal_mode=WAL")
 conn.execute("PRAGMA synchronous=NORMAL")
-conn.execute("PRAGMA cache_size=-64000")  # 64MB 缓存
-conn.execute("PRAGMA busy_timeout=5000")  # 5 秒超时
+conn.execute("PRAGMA cache_size=-128000")       # 128MB 缓存
+conn.execute("PRAGMA temp_store=MEMORY")
+conn.execute("PRAGMA busy_timeout=10000")       # 10 秒超时
+conn.execute("PRAGMA mmap_size=268435456")      # 256MB mmap
+conn.execute("PRAGMA wal_autocheckpoint=500")   # 每500页checkpoint
+conn.execute("PRAGMA journal_size_limit=104857600")  # 100MB WAL上限
 ```
 
 **核心方法**:
 ```python
 class SQLiteDatabase:
-    def __init__(db_path, pool_size=5)   # 初始化连接池
-    def insert_concept_daily(df)         # 批量插入板块数据
-    def insert_stock_daily(df)           # 批量插入个股数据
-    def get_concept_data(codes, dates)   # 查询板块数据
-    def get_latest_date()                # 获取最新日期
-    def get_statistics()                 # 获取统计信息
+    def __init__(db_path, pool_size=5)      # 初始化连接池
+    def batch_insert(table, data, batch_size=10000)  # 事务批量插入
+    def get_concept_data(codes, dates)      # 查询板块数据
+    def get_latest_date()                   # 获取最新日期
+    def get_statistics()                    # 获取统计信息
 ```
 
 **数据表结构**:
@@ -61,17 +64,99 @@ class SQLiteDatabase:
 | `stock_daily` | (ts_code, trade_date) | 个股日线行情 |
 | `concept_constituent` | (concept_code, stock_code) | 板块成分股 |
 | `stock_daily_basic` | (ts_code, trade_date) | 个股基本面 |
+| `trade_calendar` | trade_date | 交易日历（新增）|
+| `concept_daily_archive` | (ts_code, trade_date) | 板块历史归档（新增）|
+| `stock_daily_archive` | (ts_code, trade_date) | 个股历史归档（新增）|
 | `collect_task` | id | 采集任务队列 |
+
+### 覆盖索引（优化查询）
+
+```sql
+-- 板块行情覆盖索引
+CREATE INDEX idx_concept_daily_cover
+ON concept_daily(ts_code, trade_date, pct_change, vol, amount, close);
+
+-- 个股行情覆盖索引
+CREATE INDEX idx_stock_daily_cover
+ON stock_daily(ts_code, trade_date, pct_chg, total_mv, pe, pb, amount);
+
+-- 成分股权重排序索引
+CREATE INDEX idx_constituent_weight
+ON concept_constituent(concept_code, weight DESC);
+```
 
 **连接池**:
 - 默认 5 个连接
 - 支持多线程并发
 - 自动归还连接
+- 带健康检查的连接创建
 
 **修改注意**:
 - 修改表结构需更新 `_create_tables()`
 - 新增表需同步更新 `get_statistics()`
 - 保持 WAL 模式以支持高并发
+
+---
+
+## 交易日历操作
+
+**核心方法**:
+```python
+def init_trade_calendar(start_date, end_date)  # 初始化交易日历
+def get_trade_dates(start_date, end_date)      # 获取交易日列表
+def is_trade_date(date)                        # 检查是否交易日
+def get_prev_trade_date(date)                  # 获取前一交易日
+def get_next_trade_date(date)                  # 获取后一交易日
+```
+
+**初始化交易日历**:
+```python
+from data.database import get_database
+db = get_database()
+db.init_trade_calendar(start_date="20100101")
+```
+
+---
+
+## 数据归档操作
+
+**核心方法**:
+```python
+def archive_old_data(before_date, tables)      # 归档历史数据
+def restore_archived_data(start_date, end_date) # 恢复归档数据
+def get_archive_statistics()                   # 获取归档统计
+```
+
+**归档示例**:
+```python
+# 归档 2023 年之前的数据
+db.archive_old_data(before_date="20230101")
+
+# 恢复特定时间段数据
+db.restore_archived_data(start_date="20220101", end_date="20221231")
+```
+
+---
+
+## 性能监控
+
+**核心方法**:
+```python
+def get_performance_stats()  # 获取性能统计
+def optimize_database()      # 优化数据库（重建索引、清理空间）
+```
+
+**性能统计输出**:
+```python
+{
+    'page_count': 12345,
+    'page_size': 4096,
+    'db_size_mb': 48.5,
+    'wal_log': 100,
+    'concept_daily_count': 569095,
+    'concept_date_range': ('20200102', '20260313')
+}
+```
 
 ---
 
