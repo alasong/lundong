@@ -1,0 +1,13 @@
+{
+  "test_model": [
+    {
+      "version_id": "test_model_v20260316_115407",
+      "timestamp": "20260316_115407",
+      "model_path": "data/models/test/test_model_v20260316_115407.pkl",
+      "metrics": {
+        "accuracy": 0.9
+      },
+      "description": "\u6d4b\u8bd5\u7248\u672c"
+    }
+  ]
+}
