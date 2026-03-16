@@ -97,9 +97,9 @@ def main():
     parser = argparse.ArgumentParser(description="A 股热点轮动预测系统")
     parser.add_argument(
         "--mode",
-        choices=["daily", "quick", "train", "predict", "incremental", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize", "storage", "sync", "portfolio", "full", "stock"],
+        choices=["daily", "quick", "train", "predict", "incremental", "deeplearn", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize", "storage", "sync", "portfolio", "full", "stock"],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), incremental(增量更新), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理), sync(同步数据), portfolio(组合构建), full(一键式：板块 + 个股预测), stock(个股数据采集)"
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), incremental(增量更新), deeplearn(深度学习), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理), sync(同步数据), portfolio(组合构建), full(一键式：板块 + 个股预测), stock(个股数据采集)"
     )
     parser.add_argument(
         "--date",
@@ -155,6 +155,18 @@ def main():
         type=int,
         default=30,
         help="超参数调优试验次数 (train --optimize 模式使用)"
+    )
+    parser.add_argument(
+        "--model-type",
+        choices=["lstm", "transformer"],
+        default="lstm",
+        help="深度学习模型类型 (deeplearn 模式使用)"
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=100,
+        help="深度学习训练轮数 (deeplearn 模式使用)"
     )
 
     args = parser.parse_args()
@@ -370,6 +382,54 @@ def main():
                             print(f"增量更新失败: {result.get('error', '未知错误')}")
             else:
                 print("无法获取数据")
+
+        elif args.mode == "deeplearn":
+            # 深度学习模型训练（LSTM/Transformer）
+            logger.info(f"训练深度学习模型 ({args.model_type})...")
+            from models.deep_learning import DeepLearningPredictor
+            from models.predictor import UnifiedPredictor
+            from data.database import get_database
+
+            db = get_database()
+            data = db.get_all_concept_data()
+
+            if data is not None and not data.empty:
+                # 准备特征
+                predictor = UnifiedPredictor(use_enhanced_features=True)
+                features = predictor.prepare_features(data, n_jobs=8)
+
+                if not features.empty:
+                    # 创建深度学习预测器
+                    dl_predictor = DeepLearningPredictor(
+                        model_type=args.model_type,
+                        sequence_length=20,
+                        hidden_dim=64,
+                        num_layers=2,
+                        epochs=args.epochs,
+                        batch_size=32,
+                        early_stopping_patience=10
+                    )
+
+                    # 训练
+                    result = dl_predictor.train(features, verbose=1)
+
+                    # 保存模型
+                    model_path = os.path.join(settings.data_dir, "models", f"dl_{args.model_type}_model.pkl")
+                    dl_predictor.save(model_path)
+
+                    print("\n" + "=" * 70)
+                    print(f"深度学习模型 ({args.model_type}) 训练完成")
+                    print("=" * 70)
+                    for horizon, info in result.get("horizons", {}).items():
+                        metrics = info.get("metrics", {})
+                        print(f"  {horizon}: MSE={metrics.get('mse', 0):.4f}, "
+                              f"MAE={metrics.get('mae', 0):.4f}, R2={metrics.get('r2', 0):.4f}")
+                    print(f"模型已保存: {model_path}")
+                    print("=" * 70)
+                else:
+                    print("特征准备失败")
+            else:
+                print("无法获取训练数据")
 
         elif args.mode == "data":
             # 数据采集 - 默认更新到最新数据
