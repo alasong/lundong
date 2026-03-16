@@ -215,6 +215,12 @@ def main():
                 data = db.get_all_concept_data()
 
                 if data is not None and not data.empty:
+                    # 字段重命名（数据库使用 ts_code，模型使用 concept_code）
+                    if 'ts_code' in data.columns and 'concept_code' not in data.columns:
+                        data = data.rename(columns={'ts_code': 'concept_code'})
+                    if 'pct_change' in data.columns and 'pct_chg' not in data.columns:
+                        data = data.rename(columns={'pct_change': 'pct_chg'})
+
                     predictor = UnifiedPredictor(use_enhanced_features=True)
                     features = predictor.prepare_features(data, n_jobs=8)
 
@@ -719,6 +725,19 @@ def main():
                 concept_data = concept_data.rename(columns={'ts_code': 'concept_code'})
             if 'pct_change' in concept_data.columns and 'pct_chg' not in concept_data.columns:
                 concept_data = concept_data.rename(columns={'pct_change': 'pct_chg'})
+
+            # 转换日期列为整数（处理 StringDtype）
+            try:
+                # 尝试直接转换 - 适用于 StringDtype 和 object 类型
+                concept_data["trade_date"] = pd.to_numeric(
+                    concept_data["trade_date"], errors="coerce"
+                ).astype("Int64")
+            except Exception as e:
+                logger.warning(f"日期转换警告: {e}")
+                # 备选方案：先转字符串再转整数
+                concept_data["trade_date"] = concept_data["trade_date"].apply(
+                    lambda x: int(str(x)) if pd.notna(x) else 0
+                )
 
             # 应用日期筛选
             start_date = args.start_date or "20230101"
