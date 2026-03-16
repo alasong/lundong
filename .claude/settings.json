@@ -40,7 +40,6 @@
       }
     ],
 
-    
     "Stop": [
       {
         "matcher": "",
@@ -63,9 +62,16 @@
       "Bash(git diff*)",
       "Bash(git log*)",
       "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git branch*)",
+      "Bash(pytest*)",
+      "Bash(cat*)",
+      "Bash(head*)",
+      "Bash(tail*)",
       "Read(*)",
       "Write(src/*)",
       "Write(tests/*)",
+      "Write(.claude/*)",
       "Edit(*)",
       "Glob(*)",
       "Grep(*)",
@@ -73,7 +79,8 @@
     ],
     "deny": [
       "Bash(rm -rf /*)",
-      "Bash(sudo*)"
+      "Bash(sudo*)",
+      "Bash(git push --force*)"
     ]
   },
 
@@ -131,30 +138,33 @@
     }
   },
 
-  "skills": {
-    "projectSpecific": [
-      {
-        "name": "parallel-analysis",
-        "description": "并行分析多个模块",
-        "prompt": "使用 subagents 并行分析：\n1. data-explorer: 检查数据库状态和数据质量\n2. model-trainer: 检查模型状态和训练结果\n3. test-runner: 运行测试并报告结果\n汇总三个 agent 的分析结果。"
-      },
-      {
-        "name": "full-review",
-        "description": "完整代码审查",
-        "prompt": "使用 code-reviewer subagent 对最近修改的文件进行完整审查，生成审查报告。"
-      },
-      {
-        "name": "quick-fix",
-        "description": "快速修复并测试",
-        "prompt": "使用以下流程：\n1. 分析问题\n2. 使用 model-trainer 或 data-explorer 修复\n3. 使用 test-runner 验证修复"
-      },
-      {
-        "name": "update-docs",
-        "description": "更新项目文档",
-        "prompt": "使用 doc-writer subagent 更新项目文档，包括 CLAUDE.md 和 README.md。"
-      }
-    ]
-  },
+  "skills": [
+    {
+      "name": "train-model",
+      "description": "训练预测模型，显示特征重要性",
+      "prompt": "执行模型训练流程：1. 加载历史数据 2. 生成特征 3. 训练 XGBoost 模型 4. 输出特征重要性。命令：python src/main.py --mode train"
+    },
+    {
+      "name": "collect-data",
+      "description": "从 Tushare 采集最新板块和个股数据",
+      "prompt": "执行数据采集流程：1. 连接 Tushare API 2. 采集板块数据 3. 采集个股数据 4. 存入 SQLite。命令：python src/main.py --mode collect"
+    },
+    {
+      "name": "run-prediction",
+      "description": "执行完整预测流程，生成投资组合建议",
+      "prompt": "执行预测流程：1. 数据验证 2. 热点识别 3. 轮动分析 4. 模型预测 5. 组合优化 6. 生成报告。命令：python src/main.py --mode predict"
+    },
+    {
+      "name": "run-tests",
+      "description": "运行完整测试套件并生成报告",
+      "prompt": "运行测试套件：python -m pytest tests/ -v --tb=short"
+    },
+    {
+      "name": "db-stats",
+      "description": "查看数据库统计信息和性能指标",
+      "prompt": "查看数据库统计：python -c \"from src.data.database import get_database; db = get_database(); print(db.get_statistics())\""
+    }
+  ],
 
   "memory": {
     "enabled": true,
