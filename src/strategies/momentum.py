@@ -1,194 +1,181 @@
 """
-动量策略模块
-实现基于动量因子的趋势跟踪策略
+动量策略 (符合多策略框架版本)
+基于价格动量和成交量突破的趋势跟踪策略
 """
+
+from typing import Dict, List, Optional, Any
 import pandas as pd
 import numpy as np
-from typing import Dict, List
 from loguru import logger
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from strategies.base_strategy import BaseStrategy, StrategySignal
 
 
-class MomentumStrategy:
-    """
-    动量策略
+class MomentumStrategy(BaseStrategy):
+    """动量策略 - 跟随趋势"""
 
-    功能：
-    1. 价格动量 - 基于历史收益率排序
-    2. 相对强度 - 相对市场的超额收益
-    3. 动量反转 - 识别动量衰竭信号
-    """
+    def __init__(self, name: str = "momentum", params: Optional[Dict] = None):
+        default_params = {
+            "momentum_window": 20,  # 动量计算周期
+            "volume_window": 20,  # 成交量计算周期
+            "min_momentum": 0.05,  # 最小动量阈值 5%
+            "min_volume_ratio": 1.5,  # 最小成交量比率
+            "top_n_stocks": 20,  # 选股数量
+        }
+        default_params.update(params or {})
 
-    def __init__(
-        self,
-        momentum_period: int = 20,
-        reversal_period: int = 5,
-        ma_short: int = 5,
-        ma_long: int = 20,
-        stop_loss: float = 0.08,
-        take_profit: float = 0.15
-    ):
-        """
-        初始化动量策略
+        super().__init__(name, default_params)
+        self.db = None
 
-        Args:
-            momentum_period: 动量周期
-            reversal_period: 反转信号周期
-            ma_short: 短期均线
-            ma_long: 长期均线
-            stop_loss: 止损比例
-            take_profit: 止盈比例
-        """
-        self.momentum_period = momentum_period
-        self.reversal_period = reversal_period
-        self.ma_short = ma_short
-        self.ma_long = ma_long
-        self.stop_loss = stop_loss
-        self.take_profit = take_profit
+    def _init_db(self):
+        """懒加载数据库"""
+        if self.db is None:
+            from data.database import get_database
 
-        logger.info(f"动量策略初始化：Momentum({momentum_period}), MA({ma_short}/{ma_long})")
+            self.db = get_database()
 
-    def compute_momentum(self, df: pd.DataFrame, period: int = None) -> pd.DataFrame:
-        """计算动量指标"""
-        period = period or self.momentum_period
-        df = df.copy()
-        df['momentum'] = df['close'].pct_change(periods=period)
-        return df
+    def get_required_data(self) -> Dict[str, Any]:
+        """需要个股日线数据"""
+        return {
+            "concept_data": False,
+            "stock_data": True,
+            "history_days": max(
+                self.params["momentum_window"] * 2, self.params["volume_window"] * 2
+            ),
+            "features": ["close", "volume", "amount"],
+        }
 
-    def compute_ma_signals(self, df: pd.DataFrame) -> pd.DataFrame:
-        """计算均线交叉信号"""
-        df = df.copy()
-        df['ma_short'] = df['close'].rolling(window=self.ma_short).mean()
-        df['ma_long'] = df['close'].rolling(window=self.ma_long).mean()
+    def generate_signals(self, **kwargs) -> List[StrategySignal]:
+        """生成动量信号"""
+        logger.info("动量策略：生成信号...")
+        self._init_db()
 
-        df['ma_signal'] = 0
-        # 金叉买入
-        golden_cross = (df['ma_short'] > df['ma_long']) & (df['ma_short'].shift(1) <= df['ma_long'].shift(1))
-        df.loc[golden_cross, 'ma_signal'] = 1
-        # 死叉卖出
-        death_cross = (df['ma_short'] < df['ma_long']) & (df['ma_short'].shift(1) >= df['ma_long'].shift(1))
-        df.loc[death_cross, 'ma_signal'] = -1
+        signals = []
 
-        return df
+        # 获取所有股票代码
+        all_stocks = self.db.get_all_stocks()
+        if all_stocks.empty:
+            logger.warning("无股票数据")
+            return []
 
-    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
-        """生成综合交易信号"""
-        df = self.compute_momentum(df)
-        df = self.compute_ma_signals(df)
+        # 获取最新日期
+        latest_date = self.db.get_latest_date()
+        if not latest_date:
+            logger.warning("无法获取最新日期")
+            return []
 
-        df = df.copy()
-        df['signal'] = 0
+        # 计算起始日期
+        history_days = self.get_required_data()["history_days"]
+        start_date = self._get_n_days_before(latest_date, history_days)
 
-        # 动量为正且金叉时买入
-        buy_condition = (df['momentum'] > 0) & (df['ma_signal'] == 1)
-        df.loc[buy_condition, 'signal'] = 1
+        # 获取所有股票的日线数据
+        logger.info(f"获取 {len(all_stocks)} 只股票的历史数据...")
+        stock_data = self.db.get_daily_batch(
+            stock_codes=all_stocks["ts_code"].tolist(),
+            start_date=start_date,
+            end_date=latest_date,
+        )
 
-        # 动量为负且死叉时卖出
-        sell_condition = (df['momentum'] < 0) & (df['ma_signal'] == -1)
-        df.loc[sell_condition, 'signal'] = -1
+        if stock_data.empty:
+            logger.warning("无法获取股票数据")
+            return []
 
-        return df
+        # 按股票分组计算动量
+        logger.info("计算动量指标...")
 
-    def backtest(
-        self,
-        df: pd.DataFrame,
-        initial_capital: float = 1000000,
-        position_size: float = 0.1,
-        commission: float = 0.0003,
-        slippage: float = 0.001
-    ) -> Dict:
-        """回测策略"""
-        logger.info(f"开始回测动量策略...")
+        for ts_code in all_stocks["ts_code"].unique():
+            stock_df = stock_data[stock_data["ts_code"] == ts_code].sort_values(
+                "trade_date"
+            )
 
-        df = self.generate_signals(df)
-
-        capital = initial_capital
-        position = 0
-        trades = []
-        portfolio_values = []
-
-        for idx in df.index:
-            if idx == 0:
+            if len(stock_df) < self.params["momentum_window"]:
                 continue
 
-            current_price = df.loc[idx, 'close']
-            signal = df.loc[idx, 'signal']
+            # 计算动量
+            momentum = self._calculate_momentum(stock_df)
 
-            if signal == 1 and position == 0:
-                buy_price = current_price * (1 + slippage)
-                available_capital = capital * position_size
-                shares = int(available_capital / buy_price / 100) * 100
+            # 计算成交量比率
+            volume_ratio = self._calculate_volume_ratio(stock_df)
 
-                if shares > 0:
-                    cost = shares * buy_price * (1 + commission)
-                    if cost <= capital:
-                        capital -= cost
-                        position = shares
-                        trades.append({
-                            'trade_date': df.loc[idx, 'trade_date'],
-                            'type': 'buy',
-                            'price': buy_price,
-                            'shares': shares
-                        })
+            # 判断是否满足买入条件
+            if (
+                momentum >= self.params["min_momentum"]
+                and volume_ratio >= self.params["min_volume_ratio"]
+            ):
+                stock_info = all_stocks[all_stocks["ts_code"] == ts_code]
+                stock_name = (
+                    stock_info["name"].iloc[0] if not stock_info.empty else ts_code
+                )
 
-            elif signal == -1 and position > 0:
-                sell_price = current_price * (1 - slippage)
-                proceeds = position * sell_price * (1 - commission)
-                capital += proceeds
-                trades.append({
-                    'trade_date': df.loc[idx, 'trade_date'],
-                    'type': 'sell',
-                    'price': sell_price,
-                    'shares': position
-                })
-                position = 0
+                # 计算评分（动量 + 成交量）
+                score = self._calculate_score(momentum, volume_ratio)
 
-            portfolio_value = capital + position * current_price
-            portfolio_values.append({
-                'trade_date': df.loc[idx, 'trade_date'],
-                'value': portfolio_value
-            })
+                signal = StrategySignal(
+                    ts_code=ts_code,
+                    stock_name=stock_name,
+                    strategy_type="momentum",
+                    signal_type="buy",
+                    weight=min(1.0, momentum / 0.2),
+                    score=score,
+                    reason=f"20 日动量：{momentum:.1%}, 成交量比：{volume_ratio:.1f}x",
+                    metadata={
+                        "momentum_20d": momentum,
+                        "volume_ratio": volume_ratio,
+                        "latest_close": stock_df["close"].iloc[-1]
+                        if len(stock_df) > 0
+                        else 0,
+                    },
+                )
+                signals.append(signal)
 
-        results = self._calculate_metrics(initial_capital, trades, portfolio_values, df)
-        logger.info(f"回测完成：Sharpe={results['sharpe']:.2f}")
-        return results
+        # 按评分排序，取 TOP N
+        signals.sort(key=lambda s: s.score, reverse=True)
+        signals = signals[: self.params["top_n_stocks"]]
+        self.signals = signals
 
-    def _calculate_metrics(
-        self,
-        initial_capital: float,
-        trades: List[Dict],
-        portfolio_values: List[Dict],
-        df: pd.DataFrame
-    ) -> Dict:
-        """计算回测指标"""
-        if not portfolio_values:
-            return {'sharpe': 0, 'total_return': 0}
+        logger.info(f"动量策略：生成 {len(signals)} 个信号")
+        return signals
 
-        pv_df = pd.DataFrame(portfolio_values)
-        pv_df['daily_return'] = pv_df['value'].pct_change().fillna(0)
+    def _calculate_momentum(self, stock_df: pd.DataFrame) -> float:
+        """计算动量（N 日涨幅）"""
+        window = self.params["momentum_window"]
+        if len(stock_df) < window:
+            return 0.0
 
-        final_value = pv_df['value'].iloc[-1]
-        total_return = (final_value - initial_capital) / initial_capital
+        latest_close = stock_df["close"].iloc[-1]
+        prev_close = stock_df["close"].iloc[-window]
 
-        days = len(pv_df)
-        annual_return = (1 + total_return) ** (252 / days) - 1
-        daily_vol = pv_df['daily_return'].std()
-        annual_vol = daily_vol * np.sqrt(252)
+        if prev_close == 0:
+            return 0.0
 
-        sharpe = (annual_return - 0.03) / annual_vol if annual_vol > 0 else 0
+        momentum = (latest_close - prev_close) / prev_close
+        return momentum
 
-        pv_df['cummax'] = pv_df['value'].cummax()
-        pv_df['drawdown'] = (pv_df['value'] - pv_df['cummax']) / pv_df['cummax']
-        max_drawdown = pv_df['drawdown'].min()
+    def _calculate_volume_ratio(self, stock_df: pd.DataFrame) -> float:
+        """计算成交量比率"""
+        window = self.params["volume_window"]
+        if len(stock_df) < window:
+            return 1.0
 
-        return {
-            'sharpe': round(sharpe, 4),
-            'total_return': round(total_return, 4),
-            'annual_return': round(annual_return, 4),
-            'max_drawdown': round(max_drawdown, 4),
-            'total_trades': len(trades),
-            'final_value': round(final_value, 2)
-        }
+        latest_volume = stock_df["volume"].iloc[-1]
+        avg_volume = stock_df["volume"].iloc[-window:-1].mean()
+
+        if avg_volume == 0:
+            return 1.0
+
+        return latest_volume / avg_volume
+
+    def _calculate_score(self, momentum: float, volume_ratio: float) -> float:
+        """计算综合评分"""
+        momentum_score = min(100, max(0, momentum * 200))
+        volume_score = min(100, max(0, (volume_ratio - 1) * 50))
+        total_score = momentum_score * 0.7 + volume_score * 0.3
+        return min(100, max(0, total_score))
+
+    def _get_n_days_before(self, date_str: str, n_days: int) -> str:
+        """获取 N 个交易日前的日期"""
+        from datetime import timedelta
+        from datetime import datetime
+
+        date = datetime.strptime(date_str, "%Y%m%d")
+        prev_date = date - timedelta(days=n_days + n_days // 5)
+        return prev_date.strftime("%Y%m%d")

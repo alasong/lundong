@@ -1,19 +1,33 @@
 """
-策略库模块
-包含多种交易策略实现
+多策略框架
+支持灵活组合和扩展不同的交易策略
 """
-from .mean_reversion import MeanReversionStrategy
-from .momentum import MomentumStrategy
-from .event_driven import EventDrivenStrategy
-from .statistical_arbitrage import PairsTradingStrategy
-from .multi_factor import MultiFactorStrategy
-from .capital_flow import CapitalFlowStrategy
+
+from strategies.base_strategy import BaseStrategy, StrategySignal
+from strategies.strategy_factory import StrategyFactory
+from strategies.multi_strategy import MultiStrategyPortfolio
+from strategies.hot_rotation import HotRotationStrategy
+from strategies.momentum import MomentumStrategy
+from strategies.mean_reversion import MeanReversionStrategy
+from strategies.value import ValueStrategy
+from strategies.growth import GrowthStrategy
+from strategies.event_driven import EventDrivenStrategy
+from strategies.capital_flow import CapitalFlowStrategy
+from strategies.quality import QualityStrategy
+from strategies.small_cap import SmallCapStrategy
 
 __all__ = [
-    'MeanReversionStrategy',
-    'MomentumStrategy',
-    'EventDrivenStrategy',
-    'PairsTradingStrategy',
-    'MultiFactorStrategy',      # 多因子选股策略
-    'CapitalFlowStrategy',      # 资金流策略
+    "BaseStrategy",
+    "StrategySignal",
+    "StrategyFactory",
+    "MultiStrategyPortfolio",
+    "HotRotationStrategy",
+    "MomentumStrategy",
+    "MeanReversionStrategy",
+    "ValueStrategy",
+    "GrowthStrategy",
+    "EventDrivenStrategy",
+    "CapitalFlowStrategy",
+    "QualityStrategy",
+    "SmallCapStrategy",
 ]

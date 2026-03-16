@@ -119,9 +119,10 @@ def main():
             "portfolio",
             "full",
             "stock",
+            "strategy",
         ],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), incremental(增量更新), deeplearn(深度学习), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理), sync(同步数据), portfolio(组合构建), full(一键式：板块 + 个股预测), stock(个股数据采集)",
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), incremental(增量更新), deeplearn(深度学习), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理), sync(同步数据), portfolio(组合构建), full(一键式：板块 + 个股预测), stock(个股数据采集), strategy(策略运行)",
     )
     parser.add_argument("--date", type=str, help="指定日期 YYYYMMDD")
     parser.add_argument(
@@ -171,6 +172,18 @@ def main():
     )
     parser.add_argument(
         "--epochs", type=int, default=100, help="深度学习训练轮数 (deeplearn 模式使用)"
+    )
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default="hot_rotation",
+        help="策略类型 (strategy 模式使用): hot_rotation/momentum/value/growth/quality/small_cap/mean_reversion/event_driven/capital_flow/multi",
+    )
+    parser.add_argument(
+        "--strategy-params",
+        type=str,
+        default="",
+        help="策略参数 JSON (strategy 模式使用)",
     )
 
     args = parser.parse_args()
