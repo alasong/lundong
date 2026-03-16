@@ -18,8 +18,8 @@ from data.stock_screener import StockScreener
 from risk.risk_manager import RiskManager
 from risk.transaction_cost import TransactionCostModel, estimate_impact_on_returns
 from risk.signal_generator import SignalGenerator, print_signals
-from strategy.market_regime import MarketRegimeDetector, print_regime_report
-from strategy.multi_factor import MultiFactorModel
+from strategies.market_regime import MarketRegimeDetector, print_regime_report
+from strategies.multi_factor import MultiFactorStrategy
 from trading.order_manager import OrderManager, print_portfolio_summary
 from trading.rebalance_scheduler import RebalanceScheduler
 from evaluation.enhanced_backtester import EnhancedBacktester
@@ -95,7 +95,7 @@ def test_all_modules():
     # 5. 多因子模型测试
     print("\n【测试 5】多因子模型...")
     try:
-        mfm = MultiFactorModel()
+        mfm = MultiFactorStrategy()
         conn = sqlite3.connect('data/stock.db')
         cursor = conn.cursor()
         cursor.execute("SELECT DISTINCT stock_code FROM concept_constituent LIMIT 10")

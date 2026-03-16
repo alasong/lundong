@@ -97,9 +97,9 @@ def main():
     parser = argparse.ArgumentParser(description="A 股热点轮动预测系统")
     parser.add_argument(
         "--mode",
-        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize", "storage", "sync", "portfolio", "full"],
+        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize", "storage", "sync", "portfolio", "full", "stock"],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理), sync(同步数据), portfolio(组合构建), full(一键式：板块 + 个股预测)"
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理), sync(同步数据), portfolio(组合构建), full(一键式：板块 + 个股预测), stock(个股数据采集)"
     )
     parser.add_argument(
         "--date",
@@ -138,6 +138,12 @@ def main():
         choices=["verify", "cleanup", "stats"],
         default="verify",
         help="存储管理操作类型 (storage 模式使用)"
+    )
+    parser.add_argument(
+        "--stock-type",
+        choices=["all", "csi500", "gem", "star"],
+        default="all",
+        help="个股采集类型 (stock 模式使用): all(全部), csi500(中证500), gem(创业板), star(科创板)"
     )
 
     args = parser.parse_args()
@@ -933,6 +939,68 @@ def main():
             else:
                 print(f"组合构建失败：{result.get('error', '未知错误')}")
 
+            print("=" * 70 + "\n")
+
+        elif args.mode == "stock":
+            # 个股数据采集（中证500、创业板、科创板）
+            logger.info("采集个股数据...")
+            from data.extended_stock_collector import ExtendedStockCollector
+
+            print("\n" + "=" * 70)
+            print("个股数据采集")
+            print("=" * 70)
+
+            # 确定日期范围
+            start_date = args.start_date or "20200101"
+            end_date = args.end_date or datetime.now().strftime("%Y%m%d")
+
+            print(f"\n日期范围: {start_date} ~ {end_date}")
+            print(f"采集类型: {args.stock_type}")
+
+            collector = ExtendedStockCollector()
+
+            # 根据类型采集
+            if args.stock_type == "all":
+                result = collector.collect_all(
+                    start_date=start_date,
+                    end_date=end_date,
+                    include_csi500=True,
+                    include_gem=True,
+                    include_star=True
+                )
+            elif args.stock_type == "csi500":
+                result = collector.collect_all(
+                    start_date=start_date,
+                    end_date=end_date,
+                    include_csi500=True,
+                    include_gem=False,
+                    include_star=False
+                )
+            elif args.stock_type == "gem":
+                result = collector.collect_all(
+                    start_date=start_date,
+                    end_date=end_date,
+                    include_csi500=False,
+                    include_gem=True,
+                    include_star=False
+                )
+            elif args.stock_type == "star":
+                result = collector.collect_all(
+                    start_date=start_date,
+                    end_date=end_date,
+                    include_csi500=False,
+                    include_gem=False,
+                    include_star=True
+                )
+
+            print("\n" + "=" * 70)
+            print("采集结果")
+            print("=" * 70)
+            print(f"  来源: {result.get('sources', {})}")
+            print(f"  总股票数: {result['stats']['total']}")
+            print(f"  成功: {result['stats']['success']}")
+            print(f"  失败: {result['stats']['fail']}")
+            print(f"  总记录数: {result['stats']['records']:,}")
             print("=" * 70 + "\n")
 
     except Exception as e:
