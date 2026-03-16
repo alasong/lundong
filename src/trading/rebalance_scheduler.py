@@ -22,7 +22,7 @@ from risk.risk_manager import RiskManager
 from risk.transaction_cost import TransactionCostModel
 from risk.signal_generator import SignalGenerator
 from trading.order_manager import Order, OrderManager, print_portfolio_summary
-from strategy.market_regime import MarketRegimeDetector
+from strategies.market_regime import MarketRegimeDetector
 from models.stock_predictor import StockPredictor
 from data.stock_screener import StockScreener
 
