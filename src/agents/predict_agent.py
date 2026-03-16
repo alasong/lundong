@@ -162,20 +162,30 @@ class PredictAgent(BaseAgent):
 
     def _format_predictions(self, predictions: pd.DataFrame) -> Dict:
         """格式化预测结果 - 优化可读性（支持置信度）"""
+        # 只取最新日期的预测
+        if "trade_date" in predictions.columns:
+            latest_date = predictions["trade_date"].max()
+            predictions = predictions[predictions["trade_date"] == latest_date]
+            logger.info(f"筛选最新日期 {latest_date} 的预测，共 {len(predictions)} 条")
+
+        # 按 concept_code 去重，保留综合评分最高的
+        if "concept_code" in predictions.columns:
+            predictions = predictions.drop_duplicates(subset=["concept_code"], keep="first")
+
         # 按综合评分排序
         ranked = predictions.nlargest(50, "combined_score")
 
         # 添加板块名称（如果只有 code）
         top_predictions = []
-        for _, row in ranked.head(20).iterrows():
+        for idx, (_, row) in enumerate(ranked.head(20).iterrows(), 1):
             pred = {
-                "rank": int(row.name) if hasattr(row, 'name') else 0,
+                "rank": idx,
                 "concept_code": row.get("concept_code", ""),
                 "concept_name": row.get("concept_name", row.get("name", "")),
                 "combined_score": round(row.get("combined_score", 0), 2),
-                "pred_1d": round(row.get("pred_1d", 0), 2),
-                "pred_5d": round(row.get("pred_5d", 0), 2),
-                "pred_20d": round(row.get("pred_20d", 0), 2),
+                "pred_1d_pct": round(row.get("pred_1d", 0), 2),  # 预期涨跌幅 %
+                "pred_5d_pct": round(row.get("pred_5d", 0), 2),  # 预期涨跌幅 %
+                "pred_20d_pct": round(row.get("pred_20d", 0), 2),  # 预期涨跌幅 %
             }
             # 添加置信度信息（如果存在）
             if "confidence" in row:
@@ -194,7 +204,8 @@ class PredictAgent(BaseAgent):
             "top_10": top_predictions[:10],
             "top_20": top_predictions,
             "model_used": True,
-            "confidence_available": "confidence" in ranked.columns
+            "confidence_available": "confidence" in ranked.columns,
+            "prediction_date": str(latest_date) if "trade_date" in predictions.columns else None
         }
 
     def _load_training_data(self) -> Dict[str, pd.DataFrame]:

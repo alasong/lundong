@@ -386,13 +386,15 @@ class UnifiedPredictor:
 
             logger.info(f"{horizon_name}日模型：MSE={model_metrics['mse']:.4f}, R2={model_metrics['r2']:.4f}")
 
-        # 保存模型（包含特征重要性）
+        # 保存模型（包含特征重要性和指标）
         model_path = os.path.join(self.models_dir, "unified_model.pkl")
         with open(model_path, "wb") as f:
             pickle.dump({
                 "models": models,
                 "feature_cols": feature_cols,
-                "feature_importances": feature_importances
+                "feature_importances": feature_importances,
+                "metrics": metrics,
+                "train_date": pd.Timestamp.now().strftime("%Y%m%d")
             }, f)
 
         elapsed = time.time() - start_time
@@ -608,10 +610,18 @@ class UnifiedPredictor:
         if with_confidence:
             logger.debug("计算预测置信度...")
 
-            # 方法 1：基于模型 R²分数计算基础置信度
-            r2_1d = model_metrics.get("horizon_1d", {}).get("r2", 0.5)
-            r2_5d = model_metrics.get("horizon_5d", {}).get("r2", 0.5)
-            r2_20d = model_metrics.get("horizon_20d", {}).get("r2", 0.5)
+            # 获取模型 R² 分数（带默认值保护）
+            r2_1d = model_metrics.get("horizon_1d", {}).get("r2", 0.0)
+            r2_5d = model_metrics.get("horizon_5d", {}).get("r2", 0.0)
+            r2_20d = model_metrics.get("horizon_20d", {}).get("r2", 0.0)
+
+            # 如果 R² 为负或未保存，使用默认值
+            if r2_1d <= 0:
+                r2_1d = 0.1
+            if r2_5d <= 0:
+                r2_5d = 0.1
+            if r2_20d <= 0:
+                r2_20d = 0.1
 
             # 基础置信度（模型整体性能）
             base_confidence = (
@@ -620,48 +630,61 @@ class UnifiedPredictor:
                 r2_20d * weights["20d"]
             )
 
-            # 方法 2：基于预测值的离散程度
-            pred_1d_std = np.std(pred_1d) if len(pred_1d) > 1 else 1.0
-            pred_5d_std = np.std(pred_5d) if len(pred_5d) > 1 else 1.0
-            pred_20d_std = np.std(pred_20d) if len(pred_20d) > 1 else 1.0
+            # 方法 2：预测一致性（各周期预测方向是否一致）
+            direction_consistency = (
+                (np.sign(pred_1d) == np.sign(pred_5d)).astype(float) * 0.5 +
+                (np.sign(pred_5d) == np.sign(pred_20d)).astype(float) * 0.5
+            )
 
-            # 方法 3：基于特征空间的密度（简化的欧氏距离）
-            # 计算每个样本到特征中心的距离
+            # 方法 3：预测幅度合理性（过大的预测值置信度降低）
+            magnitude_penalty = np.exp(-np.abs(base_score) / 10.0)  # 预测值越大，惩罚越大
+
+            # 方法 4：特征空间密度（简化的欧氏距离）
             X_mean = np.mean(X, axis=0)
             X_std = np.std(X, axis=0) + 1e-8
             X_normalized = (X - X_mean) / X_std
             distances = np.sqrt(np.sum(X_normalized ** 2, axis=1))
-
-            # 将距离转换为置信度（距离越远，置信度越低）
-            # 使用指数衰减函数，缩放因子基于特征维度
             distance_confidence = np.exp(-distances / (2 * np.sqrt(X.shape[1])))
 
-            # 综合置信度 = 基础置信度 * 距离置信度
-            predictions["confidence_1d"] = base_confidence * 0.5 + (r2_1d * 0.5) * distance_confidence
-            predictions["confidence_5d"] = base_confidence * 0.5 + (r2_5d * 0.5) * distance_confidence
-            predictions["confidence_20d"] = base_confidence * 0.5 + (r2_20d * 0.5) * distance_confidence
+            # 综合置信度计算
+            # 1. 模型性能权重 (30%)
+            model_confidence = base_confidence
 
-            # 综合置信度
+            # 2. 预测一致性权重 (30%)
+            consistency_confidence = direction_consistency * 0.8 + 0.2
+
+            # 3. 幅度合理性权重 (20%)
+            magnitude_confidence = magnitude_penalty
+
+            # 4. 特征空间距离权重 (20%)
+            spatial_confidence = distance_confidence
+
+            # 最终置信度
             predictions["confidence"] = (
-                predictions["confidence_1d"] * weights["1d"] +
-                predictions["confidence_5d"] * weights["5d"] +
-                predictions["confidence_20d"] * weights["20d"]
+                model_confidence * 0.30 +
+                consistency_confidence * 0.30 +
+                magnitude_confidence * 0.20 +
+                spatial_confidence * 0.20
             )
 
-            # 置信度等级（高/中/低）- 基于综合得分排序后的相对位置
-            # 这样 TOP 推荐中会有高/中/低置信度的分布
-            base_score_rank = base_score.rank(pct=True)
+            # 限制置信度范围在 [0.1, 0.95]
+            predictions["confidence"] = np.clip(predictions["confidence"], 0.1, 0.95)
 
-            def get_conf_level(score_pct: float) -> str:
-                # 综合得分前 30% 为高置信度推荐
-                if score_pct >= 0.70:
+            # 各周期置信度（基于方向一致性和预测幅度）
+            predictions["confidence_1d"] = np.clip(r2_1d * consistency_confidence * magnitude_confidence, 0.1, 0.95)
+            predictions["confidence_5d"] = np.clip(r2_5d * consistency_confidence * magnitude_confidence, 0.1, 0.95)
+            predictions["confidence_20d"] = np.clip(r2_20d * consistency_confidence * magnitude_confidence, 0.1, 0.95)
+
+            # 置信度等级（基于置信度绝对值）
+            def get_conf_level(conf: float) -> str:
+                if conf >= 0.6:
                     return "高"
-                elif score_pct >= 0.40:
+                elif conf >= 0.4:
                     return "中"
                 else:
                     return "低"
 
-            predictions["confidence_level"] = base_score_rank.apply(get_conf_level)
+            predictions["confidence_level"] = predictions["confidence"].apply(get_conf_level)
 
             logger.info(f"预测置信度范围：[{predictions['confidence'].min():.3f}, {predictions['confidence'].max():.3f}]")
             logger.info(f"高置信度样本数：{(predictions['confidence_level'] == '高').sum()}")

@@ -224,9 +224,9 @@ def main():
                         block_desc = block_info['desc']
 
                         combined = pred.get('combined_score', 0)
-                        p1d = pred.get('pred_1d', 0)
-                        p5d = pred.get('pred_5d', 0)
-                        p20d = pred.get('pred_20d', 0)
+                        p1d = pred.get('pred_1d_pct', pred.get('pred_1d', 0))
+                        p5d = pred.get('pred_5d_pct', pred.get('pred_5d', 0))
+                        p20d = pred.get('pred_20d_pct', pred.get('pred_20d', 0))
 
                         # 标记
                         if i <= 3:
