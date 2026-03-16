@@ -595,6 +595,162 @@ class UnifiedPredictor:
             "results": results
         }
 
+    def incremental_update(
+        self,
+        new_data: pd.DataFrame,
+        lookback: int = 10,
+        epochs: int = 1,
+        validation_split: float = 0.2,
+        learning_rate_decay: float = 0.95
+    ) -> Dict[str, Any]:
+        """
+        增量更新模型
+
+        使用新数据对现有模型进行增量训练，无需全量重训。
+
+        Args:
+            new_data: 新的板块数据
+            lookback: 回溯天数
+            epochs: 增量训练轮数
+            validation_split: 验证集比例
+            learning_rate_decay: 学习率衰减系数
+
+        Returns:
+            更新结果
+        """
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+
+        logger.info("开始增量模型更新...")
+
+        # 准备特征
+        features = self.prepare_features(new_data, lookback=lookback)
+        if features.empty:
+            return {"success": False, "error": "特征准备失败"}
+
+        # 加载现有模型
+        model_result = self.load_model()
+        if model_result is None:
+            return {"success": False, "error": "未找到现有模型"}
+
+        models = model_result["models"]
+        feature_cols = model_result["feature_cols"]
+
+        # 对齐特征
+        missing_cols = set(feature_cols) - set(features.columns)
+        if missing_cols:
+            logger.warning(f"缺少特征列: {missing_cols}，使用 0 填充")
+            for col in missing_cols:
+                features[col] = 0.0
+
+        X = features[feature_cols].values
+
+        # 准备目标变量
+        targets = {}
+        for horizon in ["1d", "5d", "20d"]:
+            target_col = f"target_{horizon}"
+            if target_col in features.columns:
+                targets[horizon] = features[target_col].values
+
+        if not targets:
+            return {"success": False, "error": "未找到目标变量"}
+
+        results = {"success": True, "horizons": {}}
+
+        for horizon, model in models.items():
+            if model is None or horizon not in targets:
+                continue
+
+            y = targets[horizon]
+            valid_mask = ~np.isnan(y)
+            X_valid = X[valid_mask]
+            y_valid = y[valid_mask]
+
+            if len(X_valid) < 10:
+                logger.warning(f"[{horizon}] 有效样本不足，跳过")
+                continue
+
+            # 划分数据
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_valid, y_valid, test_size=validation_split, shuffle=False
+            )
+
+            # 获取当前学习率并衰减
+            current_lr = model.get_params().get("learning_rate", 0.05)
+            decayed_lr = current_lr * learning_rate_decay
+
+            # 增量训练
+            model.set_params(learning_rate=decayed_lr)
+
+            try:
+                if hasattr(model, "fit"):
+                    # XGBoost/LightGBM 支持增量训练
+                    if "XGB" in type(model).__name__:
+                        model.fit(
+                            X_train, y_train,
+                            eval_set=[(X_val, y_val)],
+                            verbose=False,
+                            xgb_model=model
+                        )
+                    elif "LGBM" in type(model).__name__:
+                        model.fit(
+                            X_train, y_train,
+                            eval_set=[(X_val, y_val)],
+                            init_model=model
+                        )
+                    else:
+                        model.fit(X_train, y_train)
+            except Exception as e:
+                logger.error(f"[{horizon}] 增量训练失败: {e}")
+                continue
+
+            # 评估
+            y_pred = model.predict(X_val)
+            metrics = {
+                "mse": mean_squared_error(y_val, y_pred),
+                "mae": mean_absolute_error(y_val, y_pred),
+                "r2": r2_score(y_val, y_pred),
+            }
+
+            results["horizons"][horizon] = {
+                "metrics": metrics,
+                "samples_used": len(X_train),
+                "learning_rate": decayed_lr,
+            }
+
+            logger.info(
+                f"[{horizon}] 增量更新完成 - MSE: {metrics['mse']:.4f}, "
+                f"R2: {metrics['r2']:.4f}, LR: {decayed_lr:.6f}"
+            )
+
+        # 保存更新后的模型
+        self._save_incremental_model(model_result, results)
+
+        return results
+
+    def _save_incremental_model(self, model_result: Dict, update_results: Dict):
+        """保存增量更新后的模型"""
+        import json
+        from datetime import datetime
+
+        model_path = os.path.join(self.models_dir, "unified_model.pkl")
+        backup_path = os.path.join(self.models_dir, f"unified_model_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
+
+        # 备份旧模型
+        if os.path.exists(model_path):
+            import shutil
+            shutil.copy(model_path, backup_path)
+            logger.info(f"模型已备份: {backup_path}")
+
+        # 更新并保存
+        model_result["last_incremental_update"] = datetime.now().isoformat()
+        model_result["update_metrics"] = update_results.get("horizons", {})
+
+        with open(model_path, "wb") as f:
+            pickle.dump(model_result, f)
+
+        logger.info("增量更新模型已保存")
+
     def _save_feature_importance(self, feature_importances: dict, feature_cols: list):
         """保存特征重要性到 JSON 文件"""
         import json

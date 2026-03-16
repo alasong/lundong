@@ -97,9 +97,9 @@ def main():
     parser = argparse.ArgumentParser(description="A 股热点轮动预测系统")
     parser.add_argument(
         "--mode",
-        choices=["daily", "quick", "train", "predict", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize", "storage", "sync", "portfolio", "full", "stock"],
+        choices=["daily", "quick", "train", "predict", "incremental", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize", "storage", "sync", "portfolio", "full", "stock"],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理), sync(同步数据), portfolio(组合构建), full(一键式：板块 + 个股预测), stock(个股数据采集)"
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), incremental(增量更新), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理), sync(同步数据), portfolio(组合构建), full(一键式：板块 + 个股预测), stock(个股数据采集)"
     )
     parser.add_argument(
         "--date",
@@ -318,6 +318,58 @@ def main():
                 print("=" * 70 + "\n")
             else:
                 logger.error(f"预测失败：{result.get('error', '未知错误')}")
+
+        elif args.mode == "incremental":
+            # 增量模型更新
+            logger.info("执行增量模型更新...")
+            from models.predictor import UnifiedPredictor
+            from data.database import get_database
+            from datetime import datetime, timedelta
+
+            db = get_database()
+            # 获取最近 7 天的数据用于增量更新
+            end_date = datetime.now().strftime("%Y%m%d")
+            start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+
+            logger.info(f"使用 {start_date} - {end_date} 数据进行增量更新")
+
+            data = db.get_all_concept_data()
+            if data is not None and not data.empty:
+                # 过滤最近数据
+                data['trade_date'] = pd.to_datetime(data['trade_date'].astype(str))
+                cutoff_date = pd.to_datetime(start_date)
+                recent_data = data[data['trade_date'] >= cutoff_date]
+
+                if recent_data.empty:
+                    print("没有足够的新数据进行增量更新")
+                else:
+                    predictor = UnifiedPredictor(use_enhanced_features=True)
+
+                    # 加载现有模型
+                    model_result = predictor.load_model()
+                    if model_result is None:
+                        print("未找到现有模型，请先运行训练：python src/main.py --mode train")
+                    else:
+                        print(f"加载现有模型（训练日期: {model_result.get('train_date', 'unknown')}）")
+                        print(f"准备增量更新，新数据: {len(recent_data)} 条")
+
+                        result = predictor.incremental_update(recent_data)
+
+                        if result.get("success"):
+                            print("\n" + "=" * 70)
+                            print("增量更新完成")
+                            print("=" * 70)
+                            for horizon, info in result.get("horizons", {}).items():
+                                metrics = info.get("metrics", {})
+                                print(f"  {horizon}: MSE={metrics.get('mse', 0):.4f}, "
+                                      f"MAE={metrics.get('mae', 0):.4f}, R2={metrics.get('r2', 0):.4f}")
+                                print(f"         样本数: {info.get('samples_used', 0)}, "
+                                      f"学习率: {info.get('learning_rate', 0):.6f}")
+                            print("=" * 70)
+                        else:
+                            print(f"增量更新失败: {result.get('error', '未知错误')}")
+            else:
+                print("无法获取数据")
 
         elif args.mode == "data":
             # 数据采集 - 默认更新到最新数据
