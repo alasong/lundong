@@ -145,6 +145,17 @@ def main():
         default="all",
         help="个股采集类型 (stock 模式使用): all(全部), csi500(中证500), gem(创业板), star(科创板)"
     )
+    parser.add_argument(
+        "--optimize",
+        action="store_true",
+        help="使用优化训练（超参数调优 + Stacking 集成）(train 模式使用)"
+    )
+    parser.add_argument(
+        "--n-trials",
+        type=int,
+        default=30,
+        help="超参数调优试验次数 (train --optimize 模式使用)"
+    )
 
     args = parser.parse_args()
 
@@ -181,10 +192,40 @@ def main():
             print_report(results["report"])
 
         elif args.mode == "train":
-            # 仅训练模型
-            logger.info("训练模型")
-            result = runner.predict_agent.execute(task="train", horizon="all")
-            print(f"训练结果：{result}")
+            # 训练模型
+            if args.optimize:
+                # 使用优化训练（超参数调优 + Stacking）
+                logger.info("使用优化训练（超参数调优 + Stacking 集成）")
+                from models.predictor import UnifiedPredictor
+                from data.database import get_database
+
+                db = get_database()
+                data = db.get_all_concept_data()
+
+                if data is not None and not data.empty:
+                    predictor = UnifiedPredictor(use_enhanced_features=True)
+                    features = predictor.prepare_features(data, n_jobs=8)
+
+                    if not features.empty:
+                        result = predictor.train_with_optimization(
+                            features,
+                            use_tuning=True,
+                            use_stacking=True,
+                            n_trials=args.n_trials
+                        )
+                        print(f"\n优化训练完成：")
+                        print(f"  特征数: {len(result.get('feature_cols', []))}")
+                        for horizon, metrics in result.get('metrics', {}).items():
+                            print(f"  {horizon}: MSE={metrics.get('mse', 0):.4f}, R2={metrics.get('r2', 0):.4f}")
+                    else:
+                        print("特征准备失败")
+                else:
+                    print("无法获取训练数据")
+            else:
+                # 标准训练
+                logger.info("训练模型")
+                result = runner.predict_agent.execute(task="train", horizon="all")
+                print(f"训练结果：{result}")
 
         elif args.mode == "predict":
             # 仅预测（使用已有模型）

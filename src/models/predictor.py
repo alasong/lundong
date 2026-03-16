@@ -507,6 +507,94 @@ class UnifiedPredictor:
             "feature_importances": feature_importances
         }
 
+    def train_with_optimization(
+        self,
+        features: pd.DataFrame,
+        use_tuning: bool = True,
+        use_stacking: bool = True,
+        n_trials: int = 30,
+        n_jobs: int = -1
+    ) -> Dict:
+        """
+        使用优化策略训练模型（超参数调优 + Stacking）
+
+        Args:
+            features: 特征数据
+            use_tuning: 是否使用超参数调优
+            use_stacking: 是否使用 Stacking 集成
+            n_trials: 调优试验次数
+            n_jobs: 并发数
+
+        Returns:
+            训练结果
+        """
+        start_time = time.time()
+        logger.info(f"开始优化训练 (tuning={use_tuning}, stacking={use_stacking})...")
+
+        try:
+            from models.model_optimizer import ModelOptimizer
+        except ImportError:
+            logger.warning("模型优化模块导入失败，使用标准训练")
+            return self.train(features, n_jobs=n_jobs)
+
+        # 准备训练数据
+        train_data = features.dropna(subset=["target_1d", "target_5d", "target_20d"])
+        feature_cols = [c for c in train_data.columns
+                       if c not in ["concept_code", "trade_date", "target_1d",
+                                    "target_5d", "target_20d", "name"]]
+
+        X = train_data[feature_cols].values
+        y_1d = train_data["target_1d"].values
+        y_5d = train_data["target_5d"].values
+        y_20d = train_data["target_20d"].values
+
+        # 创建优化器
+        optimizer = ModelOptimizer(
+            use_tuning=use_tuning,
+            use_stacking=use_stacking,
+            n_trials=n_trials
+        )
+
+        results = {}
+        metrics = {}
+        stacking_models = {}
+
+        for horizon_name, y in [("1d", y_1d), ("5d", y_5d), ("20d", y_20d)]:
+            logger.info(f"优化 {horizon_name} 模型...")
+            result = optimizer.optimize(X, y, horizon=horizon_name)
+            results[horizon_name] = result
+
+            if "stacking_metrics" in result:
+                metrics[f"horizon_{horizon_name}"] = result["stacking_metrics"]
+
+            if "stacking_model" in result:
+                stacking_models[horizon_name] = result["stacking_model"]
+
+        # 保存模型
+        model_path = os.path.join(self.models_dir, "optimized_model.pkl")
+        optimizer.save(model_path)
+
+        # 保存特征列
+        meta_path = os.path.join(self.models_dir, "optimized_model_meta.pkl")
+        with open(meta_path, "wb") as f:
+            pickle.dump({
+                "feature_cols": feature_cols,
+                "train_date": pd.Timestamp.now().strftime("%Y%m%d"),
+                "use_tuning": use_tuning,
+                "use_stacking": use_stacking,
+            }, f)
+
+        elapsed = time.time() - start_time
+        logger.info(f"优化训练完成，耗时 {elapsed:.2f}s")
+
+        return {
+            "optimizer": optimizer,
+            "stacking_models": stacking_models,
+            "metrics": metrics,
+            "feature_cols": feature_cols,
+            "results": results
+        }
+
     def _save_feature_importance(self, feature_importances: dict, feature_cols: list):
         """保存特征重要性到 JSON 文件"""
         import json
