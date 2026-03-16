@@ -1,6 +1,7 @@
 """
 高性能预测模型
 使用 XGBoost/LightGBM 进行预测，支持高并发批处理
+支持增强特征（情绪因子、资金流向因子）
 """
 import pandas as pd
 import numpy as np
@@ -21,18 +22,23 @@ class UnifiedPredictor:
     # 综合评分权重配置
     HORIZON_WEIGHTS = {"1d": 0.3, "5d": 0.5, "20d": 0.2}
 
-    def __init__(self):
+    # 是否使用增强特征
+    USE_ENHANCED_FEATURES = True
+
+    def __init__(self, use_enhanced_features: bool = True):
         ensure_directories()
         self.models_dir = os.path.join(settings.data_dir, "models")
         os.makedirs(self.models_dir, exist_ok=True)
         self.models = {}
+        self.use_enhanced_features = use_enhanced_features
 
     def prepare_features(
         self,
         concept_data: pd.DataFrame,
         lookback: int = 10,
         use_parallel: bool = True,
-        n_jobs: int = 32
+        n_jobs: int = 32,
+        use_enhanced: bool = None
     ) -> pd.DataFrame:
         """
         准备预测特征（高性能向量化版本）
@@ -42,6 +48,7 @@ class UnifiedPredictor:
             lookback: 回溯天数
             use_parallel: 是否使用并行处理
             n_jobs: 并行任务数
+            use_enhanced: 是否使用增强特征（None 则使用类默认值）
         """
         start_time = time.time()
 
@@ -87,10 +94,100 @@ class UnifiedPredictor:
             return pd.DataFrame()
 
         result_df = pd.concat(all_features, ignore_index=True)
+
+        # 添加增强特征
+        if use_enhanced is None:
+            use_enhanced = self.use_enhanced_features
+        if use_enhanced:
+            result_df = self._add_enhanced_features(result_df, concept_data, lookback)
+
         elapsed = time.time() - start_time
-        logger.info(f"特征准备完成：{len(result_df)} 条样本，耗时 {elapsed:.2f}s")
+        logger.info(f"特征准备完成：{len(result_df)} 条样本，{len(result_df.columns)} 个特征，耗时 {elapsed:.2f}s")
 
         return result_df
+
+    def _add_enhanced_features(
+        self,
+        base_features: pd.DataFrame,
+        concept_data: pd.DataFrame,
+        lookback: int = 10
+    ) -> pd.DataFrame:
+        """
+        添加增强特征（情绪因子、资金流向因子）
+
+        Args:
+            base_features: 基础特征
+            concept_data: 原始数据
+            lookback: 回溯天数
+
+        Returns:
+            包含增强特征的特征矩阵
+        """
+        try:
+            from models.enhanced_features import EnhancedFeatureEngineer
+            engineer = EnhancedFeatureEngineer()
+
+            # 获取需要的列
+            enhanced_cols = []
+            for col in ["pct_chg", "pct_change", "vol", "amount", "turnover_rate"]:
+                if col in concept_data.columns:
+                    enhanced_cols.append(col)
+
+            if len(enhanced_cols) < 2:
+                logger.warning("数据不足，跳过增强特征")
+                return base_features
+
+            # 合并增强特征
+            all_enhanced = []
+            code_col = "concept_code" if "concept_code" in concept_data.columns else "ts_code"
+
+            for code, group in concept_data.groupby(code_col):
+                group = group.sort_values("trade_date").reset_index(drop=True)
+                if len(group) < lookback + 5:
+                    continue
+
+                # 计算情绪因子
+                sentiment = engineer.compute_sentiment_factors(group, lookback)
+
+                # 计算资金流向因子
+                capital = engineer.compute_capital_flow_factors(group, lookback)
+
+                # 计算市场宽度因子
+                breadth = engineer.compute_market_breadth_factors(group, lookback)
+
+                # 合并
+                enhanced = pd.concat([sentiment, capital, breadth], axis=1)
+                enhanced[code_col] = code
+                enhanced["trade_date"] = group["trade_date"].values[-len(enhanced):]
+
+                all_enhanced.append(enhanced)
+
+            if all_enhanced:
+                enhanced_df = pd.concat(all_enhanced, ignore_index=True)
+
+                # 去除重复列
+                enhanced_df = enhanced_df.loc[:, ~enhanced_df.columns.duplicated()]
+
+                # 合并到基础特征
+                merge_cols = [code_col, "trade_date"]
+                result = base_features.merge(
+                    enhanced_df,
+                    on=merge_cols,
+                    how="left"
+                )
+
+                # 填充缺失值
+                for col in result.columns:
+                    if col not in merge_cols and col not in ["name"]:
+                        result[col] = result[col].fillna(0)
+
+                logger.info(f"增强特征已添加：{len(base_features.columns)} -> {len(result.columns)} 个特征")
+                return result
+
+        except Exception as e:
+            logger.warning(f"增强特征计算失败: {e}，使用基础特征")
+
+        return base_features
 
     def _process_single_concept_vectorized(
         self,
