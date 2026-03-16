@@ -45,6 +45,37 @@ class Settings(BaseSettings):
         "long_term": 20,    # 月级
     }
 
+    # 策略配置
+    strategy_config: dict = {
+        # 止损止盈
+        "stop_loss_default": -0.08,
+        "take_profit_default": 0.15,
+        "stop_loss_conservative": -0.05,
+        "stop_loss_aggressive": -0.12,
+
+        # 仓位管理
+        "position_bull": 0.90,
+        "position_bear": 0.30,
+        "position_sideways": 0.60,
+
+        # 轮动策略
+        "score_decay_threshold": 0.20,      # 热点评分衰减阈值
+        "prediction_diff_threshold": 0.15,   # 预测差异阈值
+        "volume_surge_threshold": 2.0,       # 成交量放大倍数
+        "rsi_overbought": 70,
+        "rsi_oversold": 30,
+
+        # 事件驱动
+        "earnings_weight_factor": 1.2,
+        "policy_weight_factor": 1.3,
+        "signal_validity_days": 10,
+
+        # 风险控制
+        "trailing_stop_enabled": True,
+        "profit_trailing_threshold": 0.05,
+        "high_vol_threshold": 0.30,
+    }
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

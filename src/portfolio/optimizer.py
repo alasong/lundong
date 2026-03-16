@@ -1,6 +1,7 @@
 """
 组合优化器
 基于风险平价和 Black-Litterman 模型构建投资组合
+集成策略层：仓位管理、风险管理、事件驱动
 """
 import pandas as pd
 import numpy as np
@@ -13,6 +14,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.database import SQLiteDatabase, get_database
+from config import settings
 
 
 class PortfolioOptimizer:
@@ -468,6 +470,143 @@ class PortfolioOptimizer:
             'risk_analysis': {}
         }
 
+    def optimize_with_strategy(
+        self,
+        stock_predictions: pd.DataFrame,
+        concept_predictions: pd.DataFrame = None,
+        market_state: str = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        集成策略层的组合优化
+
+        流程:
+        1. 识别市场状态
+        2. 根据市场状态调整仓位
+        3. 应用事件信号
+        4. 执行组合优化
+        5. 应用风险管理约束
+
+        Args:
+            stock_predictions: 个股预测 DataFrame
+            concept_predictions: 板块预测 DataFrame
+            market_state: 市场状态 (可选，自动检测)
+            **kwargs: 其他优化参数
+
+        Returns:
+            优化结果，包含策略信息
+        """
+        logger.info("开始策略集成组合优化...")
+
+        # 导入策略组件
+        try:
+            from strategy.position_manager import PositionManager
+            from strategy.enhanced_risk_manager import EnhancedRiskManager
+            from strategy.event_driver import EventDriver
+        except ImportError:
+            logger.warning("策略模块导入失败，使用基础优化")
+            return self.optimize(stock_predictions, concept_predictions, **kwargs)
+
+        # 1. 市场状态识别
+        pos_manager = PositionManager(self.db)
+        if market_state is None:
+            market_state, indicators = pos_manager.detect_market_state()
+
+        logger.info(f"市场状态: {market_state}")
+
+        # 2. 计算仓位
+        prediction_confidence = self._calc_confidence(stock_predictions)
+        total_position = pos_manager.calculate_position_size(
+            market_state,
+            prediction_confidence=prediction_confidence
+        )
+
+        logger.info(f"建议仓位: {total_position:.0%}")
+
+        # 3. 事件驱动调整
+        event_driver = EventDriver()
+        events = event_driver.check_upcoming_events()
+
+        if events and concept_predictions is not None:
+            signals = event_driver.generate_event_signals(events, concept_predictions)
+            concept_predictions = event_driver.apply_event_signals(concept_predictions, signals)
+            logger.info(f"应用 {len(signals)} 个事件信号")
+
+        # 4. 执行基础优化
+        result = self.optimize(stock_predictions, concept_predictions, **kwargs)
+
+        if not result['portfolio']:
+            return result
+
+        # 5. 应用仓位调整
+        for pos in result['portfolio']:
+            pos['weight'] = pos['weight'] * total_position
+
+        # 重新归一化
+        total_weight = sum(p['weight'] for p in result['portfolio'])
+        if total_weight > 0:
+            for pos in result['portfolio']:
+                pos['weight'] = pos['weight'] / total_weight * total_position
+
+        # 6. 风险管理信息
+        risk_manager = EnhancedRiskManager(self.db)
+        risk_report = risk_manager.get_risk_report(
+            positions=[{
+                'ts_code': p['ts_code'],
+                'stock_name': p['stock_name'],
+                'cost_price': 100,  # 假设成本
+                'shares': 100,
+                'current_price': 100
+            } for p in result['portfolio']],
+            current_prices={p['ts_code']: 100 for p in result['portfolio']},
+            market_state=market_state
+        )
+
+        # 添加策略信息到结果
+        result['strategy_info'] = {
+            'market_state': market_state,
+            'total_position': total_position,
+            'prediction_confidence': prediction_confidence,
+            'events': len(events),
+            'position_suggestion': pos_manager.get_position_suggestion(
+                market_state, prediction_confidence
+            )
+        }
+
+        result['risk_report'] = {
+            'total_value': risk_report['total_value'],
+            'alert_count': risk_report['alert_count'],
+            'critical_count': risk_report['critical_count']
+        }
+
+        # 更新指标
+        result['metrics']['total_position'] = total_position
+        result['metrics']['market_state'] = market_state
+
+        logger.info(f"策略集成优化完成: 仓位={total_position:.0%}, 持仓={len(result['portfolio'])}只")
+
+        return result
+
+    def _calc_confidence(self, stock_predictions: pd.DataFrame) -> float:
+        """计算预测置信度"""
+        if stock_predictions.empty:
+            return 0.5
+
+        if 'combined_score' not in stock_predictions.columns:
+            return 0.5
+
+        scores = stock_predictions['combined_score'].values
+
+        # 基于得分分布计算置信度
+        mean_score = np.mean(scores)
+        std_score = np.std(scores)
+
+        # 高均值 + 低标准差 = 高置信度
+        confidence = (mean_score / 100) * (1 - std_score / 50)
+        confidence = max(0.1, min(1.0, confidence))
+
+        return confidence
+
 
 def main():
     """测试函数"""
@@ -487,9 +626,11 @@ def main():
     })
 
     optimizer = PortfolioOptimizer()
+
+    # 测试基础优化
+    print("\n=== 基础组合优化 ===")
     result = optimizer.optimize(stock_predictions, concept_predictions)
 
-    print("\n=== 组合优化结果 ===")
     print(f"\n持仓数量：{len(result['portfolio'])}")
     print("\n持仓明细:")
     for pos in result['portfolio']:
@@ -500,6 +641,26 @@ def main():
     print(f"  预期波动率：{result['metrics']['expected_volatility']:.1%}")
     print(f"  夏普比率：{result['metrics']['sharpe']:.2f}")
     print(f"  最大回撤：{result['metrics']['max_drawdown']:.1%}")
+
+    # 测试策略集成优化
+    print("\n=== 策略集成优化 ===")
+    try:
+        result_with_strategy = optimizer.optimize_with_strategy(
+            stock_predictions,
+            concept_predictions,
+            market_state='BULL'
+        )
+
+        print(f"\n市场状态: {result_with_strategy['strategy_info']['market_state']}")
+        print(f"建议仓位: {result_with_strategy['strategy_info']['total_position']:.0%}")
+        print(f"预测置信度: {result_with_strategy['strategy_info']['prediction_confidence']:.2f}")
+
+        print(f"\n持仓明细 (策略调整后):")
+        for pos in result_with_strategy['portfolio']:
+            print(f"  {pos['ts_code']} {pos['stock_name']}: {pos['weight']:.1%}")
+
+    except Exception as e:
+        print(f"策略集成测试失败: {e}")
 
 
 if __name__ == "__main__":
