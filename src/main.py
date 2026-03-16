@@ -1,6 +1,7 @@
 """
 A 股热点轮动预测系统 - 简化版主入口
 """
+
 import argparse
 from datetime import datetime, timedelta
 from loguru import logger
@@ -22,7 +23,7 @@ def setup_logging():
     logger.add(
         sys.stderr,
         level=settings.log_level,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
     )
 
 
@@ -41,7 +42,7 @@ def _get_block_info(name: str, code: str) -> dict:
     if name and not name.startswith("板块_"):
         # 根据代码判断板块类型
         block_type = _get_block_type(code)
-        return {'name': name, 'desc': block_type}
+        return {"name": name, "desc": block_type}
 
     # 使用名称映射获取真实名称
     mapping = load_name_mapping()
@@ -49,10 +50,10 @@ def _get_block_info(name: str, code: str) -> dict:
 
     # 如果还是板块_xxx 格式，说明没有映射
     if real_name.startswith("板块_"):
-        return {'name': real_name, 'desc': ''}
+        return {"name": real_name, "desc": ""}
 
     block_type = _get_block_type(code)
-    return {'name': real_name, 'desc': block_type}
+    return {"name": real_name, "desc": block_type}
 
 
 def _get_block_type(code: str) -> str:
@@ -72,24 +73,24 @@ def _get_block_type(code: str) -> str:
         板块类型说明
     """
     if not code:
-        return ''
+        return ""
 
     # 提取数字部分
-    code_num = code.replace('.TI', '').replace('.', '')
+    code_num = code.replace(".TI", "").replace(".", "")
     try:
         prefix = code_num[:3]
-        if prefix == '881':
-            return '行业'
-        elif prefix == '882':
-            return '地区'
-        elif prefix == '885':
-            return '概念'
-        elif prefix == '700':
-            return '风格'
+        if prefix == "881":
+            return "行业"
+        elif prefix == "882":
+            return "地区"
+        elif prefix == "885":
+            return "概念"
+        elif prefix == "700":
+            return "风格"
         else:
-            return ''
+            return ""
     except:
-        return ''
+        return ""
 
 
 def main():
@@ -97,76 +98,79 @@ def main():
     parser = argparse.ArgumentParser(description="A 股热点轮动预测系统")
     parser.add_argument(
         "--mode",
-        choices=["daily", "quick", "train", "predict", "incremental", "deeplearn", "data", "history", "importance", "backtest", "cv", "list", "dedup", "fast", "organize", "storage", "sync", "portfolio", "full", "stock"],
+        choices=[
+            "daily",
+            "quick",
+            "train",
+            "predict",
+            "incremental",
+            "deeplearn",
+            "data",
+            "history",
+            "importance",
+            "backtest",
+            "cv",
+            "list",
+            "dedup",
+            "fast",
+            "organize",
+            "storage",
+            "sync",
+            "portfolio",
+            "full",
+            "stock",
+        ],
         default="daily",
-        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), incremental(增量更新), deeplearn(深度学习), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理), sync(同步数据), portfolio(组合构建), full(一键式：板块 + 个股预测), stock(个股数据采集)"
+        help="运行模式：daily(每日), quick(快速), train(训练), predict(预测), incremental(增量更新), deeplearn(深度学习), data(采集), history(历史), importance(特征重要性), backtest(回测), cv(交叉验证), list(查看数据), dedup(数据去重), fast(高速采集), organize(数据整理), storage(存储管理), sync(同步数据), portfolio(组合构建), full(一键式：板块 + 个股预测), stock(个股数据采集)",
+    )
+    parser.add_argument("--date", type=str, help="指定日期 YYYYMMDD")
+    parser.add_argument(
+        "--start-date", type=str, help="开始日期 YYYYMMDD (history 模式使用)"
     )
     parser.add_argument(
-        "--date",
-        type=str,
-        help="指定日期 YYYYMMDD"
-    )
-    parser.add_argument(
-        "--start-date",
-        type=str,
-        help="开始日期 YYYYMMDD (history 模式使用)"
-    )
-    parser.add_argument(
-        "--end-date",
-        type=str,
-        help="结束日期 YYYYMMDD (history 模式使用)"
+        "--end-date", type=str, help="结束日期 YYYYMMDD (history 模式使用)"
     )
     parser.add_argument(
         "--sector-type",
         choices=["all", "concept", "industry", "region"],
         default="all",
-        help="板块类型 (all/concept/industry/region) (data/fast 模式使用)"
+        help="板块类型 (all/concept/industry/region) (data/fast 模式使用)",
     )
+    parser.add_argument("--train", action="store_true", help="是否训练模型")
     parser.add_argument(
-        "--train",
-        action="store_true",
-        help="是否训练模型"
-    )
-    parser.add_argument(
-        "--top-n",
-        type=int,
-        default=10,
-        help="组合持仓股票数量 (portfolio 模式使用)"
+        "--top-n", type=int, default=10, help="组合持仓股票数量 (portfolio 模式使用)"
     )
     parser.add_argument(
         "--storage-action",
         choices=["verify", "cleanup", "stats"],
         default="verify",
-        help="存储管理操作类型 (storage 模式使用)"
+        help="存储管理操作类型 (storage 模式使用)",
     )
     parser.add_argument(
         "--stock-type",
         choices=["all", "csi500", "gem", "star"],
         default="all",
-        help="个股采集类型 (stock 模式使用): all(全部), csi500(中证500), gem(创业板), star(科创板)"
+        help="个股采集类型 (stock 模式使用): all(全部), csi500(中证500), gem(创业板), star(科创板)",
     )
     parser.add_argument(
         "--optimize",
         action="store_true",
-        help="使用优化训练（超参数调优 + Stacking 集成）(train 模式使用)"
+        help="使用优化训练（超参数调优 + Stacking 集成）(train 模式使用)",
     )
     parser.add_argument(
         "--n-trials",
         type=int,
         default=30,
-        help="超参数调优试验次数 (train --optimize 模式使用)"
+        help="超参数调优试验次数 (train --optimize 模式使用)",
     )
     parser.add_argument(
         "--model-type",
         choices=["lstm", "transformer"],
         default="lstm",
-        help="深度学习模型类型 (deeplearn 模式使用)"
+        help="深度学习模型类型 (deeplearn 模式使用)",
     )
     parser.add_argument(
-        "--epochs",
-        type=int,
-        default=100,
-        help="深度学习训练轮数 (deeplearn 模式使用)"
+        "--epochs", type=int, default=100, help="深度学习训练轮数 (deeplearn 模式使用)"
     )
 
     args = parser.parse_args()
@@ -216,10 +220,10 @@ def main():
 
                 if data is not None and not data.empty:
                     # 字段重命名（数据库使用 ts_code，模型使用 concept_code）
-                    if 'ts_code' in data.columns and 'concept_code' not in data.columns:
-                        data = data.rename(columns={'ts_code': 'concept_code'})
-                    if 'pct_change' in data.columns and 'pct_chg' not in data.columns:
-                        data = data.rename(columns={'pct_change': 'pct_chg'})
+                    if "ts_code" in data.columns and "concept_code" not in data.columns:
+                        data = data.rename(columns={"ts_code": "concept_code"})
+                    if "pct_change" in data.columns and "pct_chg" not in data.columns:
+                        data = data.rename(columns={"pct_change": "pct_chg"})
 
                     predictor = UnifiedPredictor(use_enhanced_features=True)
                     features = predictor.prepare_features(data, n_jobs=8)
@@ -229,12 +233,14 @@ def main():
                             features,
                             use_tuning=True,
                             use_stacking=True,
-                            n_trials=args.n_trials
+                            n_trials=args.n_trials,
                         )
                         print(f"\n优化训练完成：")
                         print(f"  特征数: {len(result.get('feature_cols', []))}")
-                        for horizon, metrics in result.get('metrics', {}).items():
-                            print(f"  {horizon}: MSE={metrics.get('mse', 0):.4f}, R2={metrics.get('r2', 0):.4f}")
+                        for horizon, metrics in result.get("metrics", {}).items():
+                            print(
+                                f"  {horizon}: MSE={metrics.get('mse', 0):.4f}, R2={metrics.get('r2', 0):.4f}"
+                            )
                     else:
                         print("特征准备失败")
                 else:
@@ -267,31 +273,38 @@ def main():
 
                 if top_predictions:
                     # 检查是否有置信度数据
-                    has_confidence = any('confidence' in p for p in top_predictions)
+                    has_confidence = any("confidence" in p for p in top_predictions)
 
                     print("\n【预测 TOP10】")
                     print("-" * 100)
                     if has_confidence:
-                        print(f"{'排名':<6}{'板块名称':<20}{'板块说明':<10}{'综合得分':<10}{'1 日':<8}{'5 日':<8}{'20 日':<8}{'置信度':<10}")
+                        print(
+                            f"{'排名':<6}{'板块名称':<20}{'板块说明':<10}{'综合得分':<10}{'1 日':<8}{'5 日':<8}{'20 日':<8}{'置信度':<10}"
+                        )
                         print("-" * 100)
                     else:
-                        print(f"{'排名':<6}{'板块名称':<25}{'板块说明':<15}{'综合得分':<12}{'1 日':<8}{'5 日':<8}{'20 日':<8}")
+                        print(
+                            f"{'排名':<6}{'板块名称':<25}{'板块说明':<15}{'综合得分':<12}{'1 日':<8}{'5 日':<8}{'20 日':<8}"
+                        )
                         print("-" * 100)
 
                     for i, pred in enumerate(top_predictions, 1):
                         # 获取板块名称
-                        name = pred.get('concept_name', pred.get('name', pred.get('concept_code', 'N/A')))
-                        code = pred.get('concept_code', '')
+                        name = pred.get(
+                            "concept_name",
+                            pred.get("name", pred.get("concept_code", "N/A")),
+                        )
+                        code = pred.get("concept_code", "")
 
                         # 提取板块说明（从名称中分离行业/概念属性）
                         block_info = _get_block_info(name, code)
-                        block_name = block_info['name']
-                        block_desc = block_info['desc']
+                        block_name = block_info["name"]
+                        block_desc = block_info["desc"]
 
-                        combined = pred.get('combined_score', 0)
-                        p1d = pred.get('pred_1d_pct', pred.get('pred_1d', 0))
-                        p5d = pred.get('pred_5d_pct', pred.get('pred_5d', 0))
-                        p20d = pred.get('pred_20d_pct', pred.get('pred_20d', 0))
+                        combined = pred.get("combined_score", 0)
+                        p1d = pred.get("pred_1d_pct", pred.get("pred_1d", 0))
+                        p5d = pred.get("pred_5d_pct", pred.get("pred_5d", 0))
+                        p20d = pred.get("pred_20d_pct", pred.get("pred_20d", 0))
 
                         # 标记
                         if i <= 3:
@@ -302,27 +315,42 @@ def main():
                             marker = "📊"
 
                         if has_confidence:
-                            conf = pred.get('confidence', 0)
-                            conf_level = pred.get('confidence_level', '')
-                            print(f"{i:<6}{block_name:<20}{block_desc:<10}{combined:<10.2f}"
-                                  f"{p1d:<8.2f}{p5d:<8.2f}{p20d:<8.2f}{conf:<10.3f} {conf_level} {marker}")
+                            conf = pred.get("confidence", 0)
+                            conf_level = pred.get("confidence_level", "")
+                            print(
+                                f"{i:<6}{block_name:<20}{block_desc:<10}{combined:<10.2f}"
+                                f"{p1d:<8.2f}{p5d:<8.2f}{p20d:<8.2f}{conf:<10.3f} {conf_level} {marker}"
+                            )
                         else:
-                            print(f"{i:<6}{block_name:<25}{block_desc:<15}{combined:<12.2f}"
-                                  f"{p1d:<8.2f}{p5d:<8.2f}{p20d:<8.2f} {marker}")
+                            print(
+                                f"{i:<6}{block_name:<25}{block_desc:<15}{combined:<12.2f}"
+                                f"{p1d:<8.2f}{p5d:<8.2f}{p20d:<8.2f} {marker}"
+                            )
 
                     print("-" * 100)
 
                     # 置信度统计
                     if has_confidence:
-                        conf_count = sum(1 for p in top_predictions if p.get('confidence_level') == '高')
+                        conf_count = sum(
+                            1
+                            for p in top_predictions
+                            if p.get("confidence_level") == "高"
+                        )
                         print(f"\n高置信度预测：{conf_count}/{len(top_predictions)} 个")
 
                     # 策略建议
                     print("\n【轮动策略】")
-                    top3_names = [p.get('concept_name', p.get('name', p.get('concept_code', 'N/A'))) for p in top_predictions[:3]]
+                    top3_names = [
+                        p.get(
+                            "concept_name", p.get("name", p.get("concept_code", "N/A"))
+                        )
+                        for p in top_predictions[:3]
+                    ]
                     print(f"重点关注：{', '.join(top3_names)}")
 
-                    avg_score = sum(p.get('combined_score', 0) for p in top_predictions[:3]) / 3
+                    avg_score = (
+                        sum(p.get("combined_score", 0) for p in top_predictions[:3]) / 3
+                    )
                     if avg_score > 5:
                         print("市场判断：多头行情，建议积极介入")
                     elif avg_score > 0:
@@ -342,7 +370,6 @@ def main():
             logger.info("执行增量模型更新...")
             from models.predictor import UnifiedPredictor
             from data.database import get_database
-            from datetime import datetime, timedelta
 
             db = get_database()
             # 获取最近 7 天的数据用于增量更新
@@ -354,9 +381,9 @@ def main():
             data = db.get_all_concept_data()
             if data is not None and not data.empty:
                 # 过滤最近数据
-                data['trade_date'] = pd.to_datetime(data['trade_date'].astype(str))
+                data["trade_date"] = pd.to_datetime(data["trade_date"].astype(str))
                 cutoff_date = pd.to_datetime(start_date)
-                recent_data = data[data['trade_date'] >= cutoff_date]
+                recent_data = data[data["trade_date"] >= cutoff_date]
 
                 if recent_data.empty:
                     print("没有足够的新数据进行增量更新")
@@ -366,9 +393,13 @@ def main():
                     # 加载现有模型
                     model_result = predictor.load_model()
                     if model_result is None:
-                        print("未找到现有模型，请先运行训练：python src/main.py --mode train")
+                        print(
+                            "未找到现有模型，请先运行训练：python src/main.py --mode train"
+                        )
                     else:
-                        print(f"加载现有模型（训练日期: {model_result.get('train_date', 'unknown')}）")
+                        print(
+                            f"加载现有模型（训练日期: {model_result.get('train_date', 'unknown')}）"
+                        )
                         print(f"准备增量更新，新数据: {len(recent_data)} 条")
 
                         result = predictor.incremental_update(recent_data)
@@ -379,10 +410,14 @@ def main():
                             print("=" * 70)
                             for horizon, info in result.get("horizons", {}).items():
                                 metrics = info.get("metrics", {})
-                                print(f"  {horizon}: MSE={metrics.get('mse', 0):.4f}, "
-                                      f"MAE={metrics.get('mae', 0):.4f}, R2={metrics.get('r2', 0):.4f}")
-                                print(f"         样本数: {info.get('samples_used', 0)}, "
-                                      f"学习率: {info.get('learning_rate', 0):.6f}")
+                                print(
+                                    f"  {horizon}: MSE={metrics.get('mse', 0):.4f}, "
+                                    f"MAE={metrics.get('mae', 0):.4f}, R2={metrics.get('r2', 0):.4f}"
+                                )
+                                print(
+                                    f"         样本数: {info.get('samples_used', 0)}, "
+                                    f"学习率: {info.get('learning_rate', 0):.6f}"
+                                )
                             print("=" * 70)
                         else:
                             print(f"增量更新失败: {result.get('error', '未知错误')}")
@@ -413,14 +448,16 @@ def main():
                         num_layers=2,
                         epochs=args.epochs,
                         batch_size=32,
-                        early_stopping_patience=10
+                        early_stopping_patience=10,
                     )
 
                     # 训练
                     result = dl_predictor.train(features, verbose=1)
 
                     # 保存模型
-                    model_path = os.path.join(settings.data_dir, "models", f"dl_{args.model_type}_model.pkl")
+                    model_path = os.path.join(
+                        settings.data_dir, "models", f"dl_{args.model_type}_model.pkl"
+                    )
                     dl_predictor.save(model_path)
 
                     print("\n" + "=" * 70)
@@ -428,8 +465,10 @@ def main():
                     print("=" * 70)
                     for horizon, info in result.get("horizons", {}).items():
                         metrics = info.get("metrics", {})
-                        print(f"  {horizon}: MSE={metrics.get('mse', 0):.4f}, "
-                              f"MAE={metrics.get('mae', 0):.4f}, R2={metrics.get('r2', 0):.4f}")
+                        print(
+                            f"  {horizon}: MSE={metrics.get('mse', 0):.4f}, "
+                            f"MAE={metrics.get('mae', 0):.4f}, R2={metrics.get('r2', 0):.4f}"
+                        )
                     print(f"模型已保存: {model_path}")
                     print("=" * 70)
                 else:
@@ -440,14 +479,19 @@ def main():
         elif args.mode == "data":
             # 数据采集 - 默认更新到最新数据
             from agents.data_agent import DataAgent
+
             data_agent = DataAgent()
 
             if args.date:
                 logger.info(f"采集单日数据：{args.date} (板块类型：{args.sector_type})")
-                result = data_agent.execute(task="daily", start_date=args.date, sector_type=args.sector_type)
+                result = data_agent.execute(
+                    task="daily", start_date=args.date, sector_type=args.sector_type
+                )
             else:
                 # 默认更新到最新数据
-                logger.info(f"采集最新数据（自动判断日期，板块类型：{args.sector_type}）")
+                logger.info(
+                    f"采集最新数据（自动判断日期，板块类型：{args.sector_type}）"
+                )
                 result = data_agent.execute(task="daily", sector_type=args.sector_type)
             print(f"数据采集结果：{result}")
 
@@ -458,11 +502,10 @@ def main():
                 return
             logger.info(f"执行历史数据采集：{args.start_date} - {args.end_date}")
             from agents.data_agent import DataAgent
+
             data_agent = DataAgent()
             result = data_agent.execute(
-                task="history",
-                start_date=args.start_date,
-                end_date=args.end_date
+                task="history", start_date=args.start_date, end_date=args.end_date
             )
             print(f"历史数据采集结果：{result}")
 
@@ -470,6 +513,7 @@ def main():
             # 显示特征重要性
             logger.info("加载特征重要性分析")
             from models.predictor import UnifiedPredictor
+
             predictor = UnifiedPredictor()
             predictor.print_feature_importance(top_n=20)
 
@@ -504,24 +548,28 @@ def main():
                 print("-" * 90)
 
                 name_mapping = load_name_mapping()
-                grouped = df.groupby('ts_code')
+                grouped = df.groupby("ts_code")
 
                 stats = []
                 for code, group in grouped:
                     block_name = get_block_name(code, name_mapping)
-                    date_min = str(group['trade_date'].min())
-                    date_max = str(group['trade_date'].max())
-                    stats.append({
-                        'code': code,
-                        'name': block_name,
-                        'records': len(group),
-                        'date_range': f"{date_min} - {date_max}"
-                    })
+                    date_min = str(group["trade_date"].min())
+                    date_max = str(group["trade_date"].max())
+                    stats.append(
+                        {
+                            "code": code,
+                            "name": block_name,
+                            "records": len(group),
+                            "date_range": f"{date_min} - {date_max}",
+                        }
+                    )
 
                 # 排序并显示前 50 个
-                stats.sort(key=lambda x: x['code'])
+                stats.sort(key=lambda x: x["code"])
                 for stat in stats[:50]:
-                    print(f"{stat['code']:<15}{stat['name']:<25}{stat['records']:<12}{stat['date_range']:<30}")
+                    print(
+                        f"{stat['code']:<15}{stat['name']:<25}{stat['records']:<12}{stat['date_range']:<30}"
+                    )
 
                 if len(stats) > 50:
                     print(f"... 还有 {len(stats) - 50} 个板块未显示")
@@ -546,6 +594,7 @@ def main():
             # 数据去重
             logger.info("执行数据去重")
             import pandas as pd_local
+
             raw_dir = settings.raw_data_dir
 
             if not os.path.exists(raw_dir):
@@ -573,8 +622,10 @@ def main():
                     original_count = len(df)
 
                     # 按 trade_date 去重，保留第一条
-                    if 'trade_date' in df.columns:
-                        df_dedup = df.drop_duplicates(subset=['trade_date'], keep='first')
+                    if "trade_date" in df.columns:
+                        df_dedup = df.drop_duplicates(
+                            subset=["trade_date"], keep="first"
+                        )
                     else:
                         df_dedup = df
 
@@ -586,13 +637,17 @@ def main():
                         df_dedup.to_csv(full_path, index=False)
                         total_removed += removed
                         files_processed += 1
-                        print(f"{filepath}: 移除 {removed} 条重复记录 ({original_count} -> {dedup_count})")
+                        print(
+                            f"{filepath}: 移除 {removed} 条重复记录 ({original_count} -> {dedup_count})"
+                        )
 
                 except Exception as e:
                     logger.warning(f"处理文件 {filepath} 失败：{e}")
 
             print("-" * 70)
-            print(f"完成：处理 {files_processed} 个文件，共移除 {total_removed} 条重复记录")
+            print(
+                f"完成：处理 {files_processed} 个文件，共移除 {total_removed} 条重复记录"
+            )
             print("=" * 70 + "\n")
 
         elif args.mode == "fast":
@@ -609,8 +664,8 @@ def main():
 
             collector = HighSpeedDataCollector(
                 token=settings.tushare_token,
-                max_workers=8,   # 8 线程并发（避免触发 500 次/分钟限流）
-                api_limit=450    # API 每分钟限制 450 次（预留缓冲）
+                max_workers=8,  # 8 线程并发（避免触发 500 次/分钟限流）
+                api_limit=450,  # API 每分钟限制 450 次（预留缓冲）
             )
 
             # 下载所有板块历史数据
@@ -619,7 +674,7 @@ def main():
                 start_date,
                 end_date,
                 concurrent=True,
-                sector_type=args.sector_type or "all"
+                sector_type=args.sector_type or "all",
             )
 
         elif args.mode == "organize":
@@ -644,7 +699,17 @@ def main():
                 print("警告：此操作将删除所有单板块文件，只保留合并文件")
                 print("这将释放磁盘空间，但单个板块数据将需要从合并文件中读取")
                 print("\n合并文件位置：", manager.merged_file)
-                print("将删除的文件数：", len([f for f in os.listdir(settings.raw_data_dir) if f.startswith('ths_') and ('.TI.csv' in f or f.endswith('_TI.csv'))]))
+                print(
+                    "将删除的文件数：",
+                    len(
+                        [
+                            f
+                            for f in os.listdir(settings.raw_data_dir)
+                            if f.startswith("ths_")
+                            and (".TI.csv" in f or f.endswith("_TI.csv"))
+                        ]
+                    ),
+                )
                 print("\n是否继续？(Y/n): ", end="")
                 # 非确认模式（脚本调用时自动确认）
                 if os.environ.get("AUTO_CONFIRM") == "1":
@@ -667,17 +732,28 @@ def main():
                 print(f"状态：{result['status']}")
                 print(f"总记录数：{result['total_records']:,}")
                 print(f"板块数量：{result['unique_codes']}")
-                print(f"日期范围：{result['date_range'][0]} - {result['date_range'][1]}")
-                if result.get('duplicates', 0) > 0:
+                print(
+                    f"日期范围：{result['date_range'][0]} - {result['date_range'][1]}"
+                )
+                if result.get("duplicates", 0) > 0:
                     print(f"重复记录：{result['duplicates']:,}")
-                if result.get('null_fields'):
+                if result.get("null_fields"):
                     print(f"空值字段：{result['null_fields']}")
                 print("=" * 70)
 
                 # 统计原始文件
-                raw_files = [f for f in os.listdir(settings.raw_data_dir) if f.startswith('ths_') and ('.TI.csv' in f or f.endswith('_TI.csv'))]
-                history_files = [f for f in os.listdir(settings.raw_data_dir) if 'all_history' in f]
-                print(f"\n原始目录：{len(raw_files)} 个单板块文件，{len(history_files)} 个合集文件")
+                raw_files = [
+                    f
+                    for f in os.listdir(settings.raw_data_dir)
+                    if f.startswith("ths_")
+                    and (".TI.csv" in f or f.endswith("_TI.csv"))
+                ]
+                history_files = [
+                    f for f in os.listdir(settings.raw_data_dir) if "all_history" in f
+                ]
+                print(
+                    f"\n原始目录：{len(raw_files)} 个单板块文件，{len(history_files)} 个合集文件"
+                )
                 print(f"合并文件：{manager.merged_file}")
                 print("=" * 70 + "\n")
 
@@ -693,9 +769,17 @@ def main():
             print("=" * 70)
 
             # 显示同步前状态
-            raw_files = [f for f in os.listdir(settings.raw_data_dir) if f.startswith('ths_') and ('.TI.csv' in f or f.endswith('_TI.csv'))]
-            history_files = [f for f in os.listdir(settings.raw_data_dir) if 'all_history' in f]
-            print(f"\n同步前：{len(raw_files)} 个单板块文件，{len(history_files)} 个合集文件")
+            raw_files = [
+                f
+                for f in os.listdir(settings.raw_data_dir)
+                if f.startswith("ths_") and (".TI.csv" in f or f.endswith("_TI.csv"))
+            ]
+            history_files = [
+                f for f in os.listdir(settings.raw_data_dir) if "all_history" in f
+            ]
+            print(
+                f"\n同步前：{len(raw_files)} 个单板块文件，{len(history_files)} 个合集文件"
+            )
 
             # 执行同步
             new_total, total = manager.sync_from_raw()
@@ -721,10 +805,16 @@ def main():
             logger.info(f"加载了 {len(concept_data)} 条历史记录")
 
             # 字段重命名（合并文件使用 ts_code/pct_change，回测使用 concept_code/pct_chg）
-            if 'ts_code' in concept_data.columns and 'concept_code' not in concept_data.columns:
-                concept_data = concept_data.rename(columns={'ts_code': 'concept_code'})
-            if 'pct_change' in concept_data.columns and 'pct_chg' not in concept_data.columns:
-                concept_data = concept_data.rename(columns={'pct_change': 'pct_chg'})
+            if (
+                "ts_code" in concept_data.columns
+                and "concept_code" not in concept_data.columns
+            ):
+                concept_data = concept_data.rename(columns={"ts_code": "concept_code"})
+            if (
+                "pct_change" in concept_data.columns
+                and "pct_chg" not in concept_data.columns
+            ):
+                concept_data = concept_data.rename(columns={"pct_change": "pct_chg"})
 
             # 转换日期列为整数（处理 StringDtype）
             try:
@@ -743,10 +833,12 @@ def main():
             start_date = args.start_date or "20230101"
             end_date = args.end_date or "20241231"
             concept_data = concept_data[
-                (concept_data["trade_date"] >= int(start_date)) &
-                (concept_data["trade_date"] <= int(end_date))
+                (concept_data["trade_date"] >= int(start_date))
+                & (concept_data["trade_date"] <= int(end_date))
             ]
-            logger.info(f"筛选后数据：{len(concept_data)} 条记录 ({start_date} - {end_date})")
+            logger.info(
+                f"筛选后数据：{len(concept_data)} 条记录 ({start_date} - {end_date})"
+            )
 
             if len(concept_data) < 1000:
                 logger.error("数据量不足，无法进行回测")
@@ -760,13 +852,15 @@ def main():
             test_windows = int(os.environ.get("BACKTEST_TEST", 3))
             step = int(os.environ.get("BACKTEST_STEP", 3))
 
-            logger.info(f"回测参数：训练={train_windows}月，测试={test_windows}月，步长={step}月")
+            logger.info(
+                f"回测参数：训练={train_windows}月，测试={test_windows}月，步长={step}月"
+            )
 
             results = backtester.run_walk_forward(
                 concept_data,
                 train_windows=train_windows,
                 test_windows=test_windows,
-                step=step
+                step=step,
             )
 
             # 输出回测结果
@@ -774,8 +868,8 @@ def main():
             print("回测结果汇总")
             print("=" * 70)
 
-            if 'avg_metrics' in results:
-                m = results['avg_metrics']
+            if "avg_metrics" in results:
+                m = results["avg_metrics"]
                 print(f"回测折叠数：{m['folds']}")
                 print(f"平均 IC: {m['avg_ic']:.4f}")
                 print(f"平均 RankIC: {m['avg_rank_ic']:.4f}")
@@ -785,15 +879,19 @@ def main():
                 print(f"胜率：{m['win_rate']:.2%}")
 
                 # 折叠详情
-                if 'fold_results' in results and results['fold_results']:
+                if "fold_results" in results and results["fold_results"]:
                     print("\n【各折叠详情】")
                     print("-" * 70)
-                    print(f"{'折叠':<6}{'IC':<10}{'RankIC':<10}{'Sharpe':<10}{'收益率':<12}{'最大回撤':<12}")
+                    print(
+                        f"{'折叠':<6}{'IC':<10}{'RankIC':<10}{'Sharpe':<10}{'收益率':<12}{'最大回撤':<12}"
+                    )
                     print("-" * 70)
-                    for fold in results['fold_results']:
-                        print(f"{fold.get('fold', 0):<6}{fold.get('ic', 0):<10.4f}"
-                              f"{fold.get('rank_ic', 0):<10.4f}{fold.get('sharpe', 0):<10.2f}"
-                              f"{fold.get('total_return', 0):<12.2f}%{fold.get('max_drawdown', 0):<12.2%}")
+                    for fold in results["fold_results"]:
+                        print(
+                            f"{fold.get('fold', 0):<6}{fold.get('ic', 0):<10.4f}"
+                            f"{fold.get('rank_ic', 0):<10.4f}{fold.get('sharpe', 0):<10.2f}"
+                            f"{fold.get('total_return', 0):<12.2f}%{fold.get('max_drawdown', 0):<12.2%}"
+                        )
                     print("-" * 70)
             else:
                 print(f"回测失败：{results.get('error', '未知错误')}")
@@ -818,17 +916,23 @@ def main():
             logger.info(f"加载了 {len(concept_data)} 条历史记录")
 
             # 字段重命名（合并文件使用 ts_code/pct_change，回测使用 concept_code/pct_chg）
-            if 'ts_code' in concept_data.columns and 'concept_code' not in concept_data.columns:
-                concept_data = concept_data.rename(columns={'ts_code': 'concept_code'})
-            if 'pct_change' in concept_data.columns and 'pct_chg' not in concept_data.columns:
-                concept_data = concept_data.rename(columns={'pct_change': 'pct_chg'})
+            if (
+                "ts_code" in concept_data.columns
+                and "concept_code" not in concept_data.columns
+            ):
+                concept_data = concept_data.rename(columns={"ts_code": "concept_code"})
+            if (
+                "pct_change" in concept_data.columns
+                and "pct_chg" not in concept_data.columns
+            ):
+                concept_data = concept_data.rename(columns={"pct_change": "pct_chg"})
 
             # 应用日期筛选
             start_date = args.start_date or "20200101"
             end_date = args.end_date or "20251231"
             concept_data = concept_data[
-                (concept_data["trade_date"] >= int(start_date)) &
-                (concept_data["trade_date"] <= int(end_date))
+                (concept_data["trade_date"] >= int(start_date))
+                & (concept_data["trade_date"] <= int(end_date))
             ]
             logger.info(f"筛选后数据：{len(concept_data)} 条记录")
 
@@ -841,15 +945,17 @@ def main():
             purge_days = int(os.environ.get("CV_PURGE", 5))
             embargo_days = int(os.environ.get("CV_EMBARGO", 2))
 
-            logger.info(f"交叉验证参数：n_splits={n_splits}, train_window={train_months}月，"
-                       f"purge={purge_days}天，embargo={embargo_days}天")
+            logger.info(
+                f"交叉验证参数：n_splits={n_splits}, train_window={train_months}月，"
+                f"purge={purge_days}天，embargo={embargo_days}天"
+            )
 
             results = backtester.run_purged_kfold(
                 concept_data,
                 n_splits=n_splits,
                 train_window_months=train_months,
                 purge_days=purge_days,
-                embargo_days=embargo_days
+                embargo_days=embargo_days,
             )
 
             # 输出结果
@@ -857,8 +963,8 @@ def main():
             print("时序交叉验证结果（Purged K-Fold）")
             print("=" * 70)
 
-            if 'avg_metrics' in results:
-                m = results['avg_metrics']
+            if "avg_metrics" in results:
+                m = results["avg_metrics"]
                 print(f"\n验证折叠数：{m['folds']}/{n_splits}")
                 print(f"平均 IC: {m['avg_ic']:.4f} (±{m['ic_std']:.4f})")
                 print(f"平均 RankIC: {m['avg_rank_ic']:.4f}")
@@ -868,16 +974,20 @@ def main():
                 print(f"胜率：{m['win_rate']:.2%}")
 
                 # 折叠详情
-                if 'fold_results' in results and results['fold_results']:
+                if "fold_results" in results and results["fold_results"]:
                     print("\n【各折叠详情】")
                     print("-" * 90)
-                    print(f"{'折叠':<6}{'时间范围':<25}{'IC':<10}{'RankIC':<10}{'Sharpe':<10}{'收益率':<12}")
+                    print(
+                        f"{'折叠':<6}{'时间范围':<25}{'IC':<10}{'RankIC':<10}{'Sharpe':<10}{'收益率':<12}"
+                    )
                     print("-" * 90)
-                    for fold in results['fold_results']:
+                    for fold in results["fold_results"]:
                         time_range = f"{fold.get('test_start', 'N/A')} - {fold.get('test_end', 'N/A')}"
-                        print(f"{fold.get('fold', 0):<6}{time_range:<25}"
-                              f"{fold.get('ic', 0):<10.4f}{fold.get('rank_ic', 0):<10.4f}"
-                              f"{fold.get('sharpe', 0):<10.2f}{fold.get('total_return', 0):<12.2f}%")
+                        print(
+                            f"{fold.get('fold', 0):<6}{time_range:<25}"
+                            f"{fold.get('ic', 0):<10.4f}{fold.get('rank_ic', 0):<10.4f}"
+                            f"{fold.get('sharpe', 0):<10.2f}{fold.get('total_return', 0):<12.2f}%"
+                        )
                     print("-" * 90)
             else:
                 print(f"验证失败：{results.get('error', '未知错误')}")
@@ -905,7 +1015,7 @@ def main():
                     if all_predictions:
                         # 提取板块代码和预测
                         concept_predictions = pd.DataFrame(all_predictions)
-                        concept_codes = concept_predictions['concept_code'].tolist()
+                        concept_codes = concept_predictions["concept_code"].tolist()
                         logger.info(f"获取到 {len(concept_codes)} 个板块预测")
 
             if not concept_codes:
@@ -915,20 +1025,24 @@ def main():
             # 过滤：只保留有成分股数据的板块
             # 直接查询数据库中有成分股的板块
             from data.database import get_database
+
             db = get_database()
 
             # 查询所有有成分股的板块
             import sqlite3
-            conn = sqlite3.connect('data/stock.db')
+
+            conn = sqlite3.connect("data/stock.db")
             cursor = conn.cursor()
-            cursor.execute('SELECT DISTINCT concept_code FROM concept_constituent')
+            cursor.execute("SELECT DISTINCT concept_code FROM concept_constituent")
             available_concepts = [row[0] for row in cursor.fetchall()]
             conn.close()
 
             logger.info(f"数据库中有成分股的板块：{available_concepts}")
 
             # 找出同时在预测结果和成分股中的板块
-            concept_codes_set = set(concept_predictions['concept_code'].unique().tolist())
+            concept_codes_set = set(
+                concept_predictions["concept_code"].unique().tolist()
+            )
             available_set = set(available_concepts)
             valid_concepts = list(concept_codes_set & available_set)
 
@@ -937,7 +1051,7 @@ def main():
             if valid_concepts:
                 # 过滤预测 DataFrame
                 concept_predictions = concept_predictions[
-                    concept_predictions['concept_code'].isin(valid_concepts)
+                    concept_predictions["concept_code"].isin(valid_concepts)
                 ]
                 concept_codes = valid_concepts
             else:
@@ -945,7 +1059,7 @@ def main():
                 logger.info("请使用以下板块测试：{available_concepts}")
                 # 使用有成分股的板块来测试
                 concept_predictions = concept_predictions[
-                    concept_predictions['concept_code'].isin(available_concepts[:3])
+                    concept_predictions["concept_code"].isin(available_concepts[:3])
                 ]
                 concept_codes = available_concepts[:3]
 
@@ -955,7 +1069,7 @@ def main():
                 task="build",
                 concept_codes=concept_codes,
                 concept_predictions=concept_predictions,
-                top_n_stocks=args.top_n
+                top_n_stocks=args.top_n,
             )
 
             # 输出结果
@@ -971,10 +1085,14 @@ def main():
 
                 print("\n【持仓明细】")
                 print("-" * 100)
-                print(f"{'代码':<12}{'名称':<15}{'权重':<12}{'所属板块':<20}{'1 日预测':<12}{'5 日预测':<12}")
+                print(
+                    f"{'代码':<12}{'名称':<15}{'权重':<12}{'所属板块':<20}{'1 日预测':<12}{'5 日预测':<12}"
+                )
                 print("-" * 100)
                 for pos in portfolio:
-                    print(f"{pos['ts_code']:<12}{pos['stock_name']:<15}{pos['weight']:>10.1%}  {pos['concept_name']:<20}{pos.get('pred_1d', 0):>10.2f}%{pos.get('pred_5d', 0):>10.2f}%")
+                    print(
+                        f"{pos['ts_code']:<12}{pos['stock_name']:<15}{pos['weight']:>10.1%}  {pos['concept_name']:<20}{pos.get('pred_1d', 0):>10.2f}%{pos.get('pred_5d', 0):>10.2f}%"
+                    )
                 print("-" * 100)
 
                 print("\n【预期指标】")
@@ -1017,42 +1135,52 @@ def main():
                     all_predictions = prediction_data.get("predictions", [])
                     if all_predictions:
                         concept_predictions = pd.DataFrame(all_predictions)
-                        concept_codes = concept_predictions['concept_code'].unique().tolist()
+                        concept_codes = (
+                            concept_predictions["concept_code"].unique().tolist()
+                        )
                         logger.info(f"获取到 {len(concept_codes)} 个板块预测")
 
             # 输出板块预测结果
             if concept_predictions is not None and not concept_predictions.empty:
-                top_concepts = concept_predictions.nlargest(10, 'combined_score')
+                top_concepts = concept_predictions.nlargest(10, "combined_score")
                 print("\n【热点板块 TOP10】")
                 print("-" * 80)
-                print(f"{'排名':<6}{'板块代码':<15}{'综合得分':<12}{'1 日预测':<10}{'5 日预测':<10}{'20 日预测':<10}")
+                print(
+                    f"{'排名':<6}{'板块代码':<15}{'综合得分':<12}{'1 日预测':<10}{'5 日预测':<10}{'20 日预测':<10}"
+                )
                 print("-" * 80)
                 for i, row in top_concepts.iterrows():
-                    print(f"{i:<6}{row['concept_code']:<15}{row['combined_score']:<12.2f}"
-                          f"{row['pred_1d']:<10.2f}{row['pred_5d']:<10.2f}{row['pred_20d']:<10.2f}")
+                    print(
+                        f"{i:<6}{row['concept_code']:<15}{row['combined_score']:<12.2f}"
+                        f"{row['pred_1d']:<10.2f}{row['pred_5d']:<10.2f}{row['pred_20d']:<10.2f}"
+                    )
                 print("-" * 80)
 
             # Step 2: 筛选成分股
             print("\n【Step 2/3】筛选成分股...")
             from data.database import get_database
+
             db = get_database()
 
             import sqlite3
-            conn = sqlite3.connect('data/stock.db')
+
+            conn = sqlite3.connect("data/stock.db")
             cursor = conn.cursor()
-            cursor.execute('SELECT DISTINCT concept_code FROM concept_constituent')
+            cursor.execute("SELECT DISTINCT concept_code FROM concept_constituent")
             available_concepts = [row[0] for row in cursor.fetchall()]
             conn.close()
 
             # 找出同时在预测结果和成分股中的板块
             if concept_predictions is not None:
-                concept_codes_set = set(concept_predictions['concept_code'].unique().tolist())
+                concept_codes_set = set(
+                    concept_predictions["concept_code"].unique().tolist()
+                )
                 available_set = set(available_concepts)
                 valid_concepts = list(concept_codes_set & available_set)
 
                 if valid_concepts:
                     concept_predictions = concept_predictions[
-                        concept_predictions['concept_code'].isin(valid_concepts)
+                        concept_predictions["concept_code"].isin(valid_concepts)
                     ]
                     concept_codes = valid_concepts
                     logger.info(f"有效板块：{len(concept_codes)} 个（有成分股数据）")
@@ -1061,7 +1189,7 @@ def main():
                     concept_codes = available_concepts[:3] if available_concepts else []
                     if concept_codes:
                         concept_predictions = concept_predictions[
-                            concept_predictions['concept_code'].isin(concept_codes)
+                            concept_predictions["concept_code"].isin(concept_codes)
                         ]
 
             if not concept_codes:
@@ -1074,7 +1202,7 @@ def main():
                 task="build",
                 concept_codes=concept_codes,
                 concept_predictions=concept_predictions,
-                top_n_stocks=args.top_n
+                top_n_stocks=args.top_n,
             )
 
             # 输出结果
@@ -1092,11 +1220,15 @@ def main():
                 if portfolio:
                     print("\n【持仓明细】")
                     print("-" * 100)
-                    print(f"{'代码':<12}{'名称':<15}{'权重':>10}{'所属板块':<20}{'1 日预测':>10}{'5 日预测':>10}")
+                    print(
+                        f"{'代码':<12}{'名称':<15}{'权重':>10}{'所属板块':<20}{'1 日预测':>10}{'5 日预测':>10}"
+                    )
                     print("-" * 100)
                     for pos in portfolio:
-                        print(f"{pos['ts_code']:<12}{pos['stock_name']:<15}{pos['weight']:>10.1%}  "
-                              f"{pos['concept_code']:<20}{pos.get('pred_1d', 0):>10.2f}%{pos.get('pred_5d', 0):>10.2f}%")
+                        print(
+                            f"{pos['ts_code']:<12}{pos['stock_name']:<15}{pos['weight']:>10.1%}  "
+                            f"{pos['concept_code']:<20}{pos.get('pred_1d', 0):>10.2f}%{pos.get('pred_5d', 0):>10.2f}%"
+                        )
                     print("-" * 100)
 
                 print("\n【预期指标】")
@@ -1138,7 +1270,7 @@ def main():
                     end_date=end_date,
                     include_csi500=True,
                     include_gem=True,
-                    include_star=True
+                    include_star=True,
                 )
             elif args.stock_type == "csi500":
                 result = collector.collect_all(
@@ -1146,7 +1278,7 @@ def main():
                     end_date=end_date,
                     include_csi500=True,
                     include_gem=False,
-                    include_star=False
+                    include_star=False,
                 )
             elif args.stock_type == "gem":
                 result = collector.collect_all(
@@ -1154,7 +1286,7 @@ def main():
                     end_date=end_date,
                     include_csi500=False,
                     include_gem=True,
-                    include_star=False
+                    include_star=False,
                 )
             elif args.stock_type == "star":
                 result = collector.collect_all(
@@ -1162,7 +1294,7 @@ def main():
                     end_date=end_date,
                     include_csi500=False,
                     include_gem=False,
-                    include_star=True
+                    include_star=True,
                 )
 
             print("\n" + "=" * 70)
