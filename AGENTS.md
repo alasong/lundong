@@ -40,12 +40,12 @@
 
 | 模块 | 文档 | 核心职责 |
 |------|------|----------|
-| **Agent 层** | [src/agents/CLAUDE.md](src/agents/CLAUDE.md) | 业务编排、工作流控制 |
-| **数据层** | [src/data/CLAUDE.md](src/data/CLAUDE.md) | 数据采集、存储、验证 |
-| **模型层** | [src/models/CLAUDE.md](src/models/CLAUDE.md) | 特征工程、预测模型 |
-| **分析层** | [src/analysis/CLAUDE.md](src/analysis/CLAUDE.md) | 热点识别、轮动分析 |
-| **组合优化** | [src/portfolio/CLAUDE.md](src/portfolio/CLAUDE.md) | 股票筛选、权重优化 |
-| **评估模块** | [src/evaluation/CLAUDE.md](src/evaluation/CLAUDE.md) | 回测、交叉验证 |
+| **Agent 层** | [src/agents/AGENTS.md](src/agents/AGENTS.md) | 业务编排、工作流控制 |
+| **数据层** | [src/data/AGENTS.md](src/data/AGENTS.md) | 数据采集、存储、验证 |
+| **模型层** | [src/models/AGENTS.md](src/models/AGENTS.md) | 特征工程、预测模型 |
+| **分析层** | [src/analysis/AGENTS.md](src/analysis/AGENTS.md) | 热点识别、轮动分析 |
+| **组合优化** | [src/portfolio/AGENTS.md](src/portfolio/AGENTS.md) | 股票筛选、权重优化 |
+| **评估模块** | [src/evaluation/AGENTS.md](src/evaluation/AGENTS.md) | 回测、交叉验证 |
 
 ---
 

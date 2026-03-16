@@ -45,6 +45,35 @@ lgb.LGBMRegressor(
 ```python
 HORIZON_WEIGHTS = {
     "1d": 0.3,   # 次日预测权重
+    "5d": 0.5,   # 5 日预测权重
+    "20d": 0.2   # 20 日预测权重
+}
+
+# 综合评分
+combined_score = pred_1d * 0.3 + pred_5d * 0.5 + pred_20d * 0.2
+```
+
+**核心方法**:
+```python
+class UnifiedPredictor:
+    def prepare_features(concept_data, lookback=10, n_jobs=32, use_cache=True)
+    def train(features_df)
+    def predict(model, features_df, n_jobs=32)
+    def time_series_cv(features, n_splits=5, test_size=60)  # 时间序列交叉验证
+    def load_model(version=None)  # 支持版本加载
+    def get_model_versions()  # 获取版本历史
+    def print_feature_importance(top_n=20)
+```
+
+**新增功能**:
+- **特征缓存**: 自动缓存计算结果，避免重复计算 (TTL=1 小时)
+- **模型版本管理**: 每次训练生成版本号，保留最近 20 个版本
+- **时间序列 CV**: Purged Walk-Forward 交叉验证，防止数据泄露
+
+**预测周期**:
+```python
+HORIZON_WEIGHTS = {
+    "1d": 0.3,   # 次日预测权重
     "5d": 0.5,   # 5日预测权重
     "20d": 0.2   # 20日预测权重
 }
@@ -194,10 +223,26 @@ window_data = np.lib.stride_tricks.sliding_window_view(
 def train(features_df):
     """
     1. 分离特征和目标
-    2. 划分训练/验证集 (80/20)
+    2. 划分训练/验证集 (80/20，时间序列不 shuffle)
     3. 训练 3 个周期模型 (1d/5d/20d)
-    4. 保存模型到 data/models/unified_model.pkl
+    4. 生成版本号 (YYYYMMDD_HHMMSS)
+    5. 保存模型 + 版本备份 + 版本历史
     """
+```
+
+**目标变量**:
+```python
+target_1d  = pct_chg.shift(-1)   # 次日涨跌幅
+target_5d  = pct_chg.rolling(5).sum().shift(-5)  # 5 日累计
+target_20d = pct_chg.rolling(20).sum().shift(-20)  # 20 日累计
+```
+
+**模型版本管理**:
+```python
+# 训练后生成
+- unified_model.pkl              # 主模型（覆盖）
+- unified_model_v{version}.pkl   # 版本备份
+- model_versions.json            # 版本历史（最近 20 个）
 ```
 
 **目标变量**:
@@ -273,6 +318,79 @@ class StockPredictor:
 
 ---
 
+## 特征缓存机制
+
+**文件**: `predictor.py` → `_load_cached_features()`, `_save_cached_features()`
+
+**用途**: 避免重复计算特征，加速迭代开发
+
+```python
+# 缓存配置
+FEATURE_CACHE_ENABLED = True
+FEATURE_CACHE_TTL = 3600  # 1 小时
+
+# 缓存键生成（基于数据哈希）
+cache_key = hashlib.md5(data.to_string().encode()).hexdigest()[:16]
+
+# 自动缓存
+features = predictor.prepare_features(data, use_cache=True)  # 默认启用
+```
+
+**缓存位置**: `data/cache/features/`
+
+---
+
+## 模型版本管理
+
+**文件**: `predictor.py` → `_save_model_version()`, `load_model_version()`
+
+**版本命名**: `YYYYMMDD_HHMMSS`
+
+```python
+# 训练时自动生成版本
+result = predictor.train(features)
+# → unified_model_v20260316_143022.pkl
+
+# 查看版本历史
+versions = predictor.get_model_versions()
+
+# 加载指定版本
+model = predictor.load_model(version="20260316_143022")
+```
+
+**版本历史**: `data/models/model_versions.json`
+
+---
+
+## 时间序列交叉验证
+
+**文件**: `predictor.py` → `time_series_cv()`
+
+**方法**: Purged Walk-Forward CV（带隔离带）
+
+```python
+# 5 折时间序列 CV
+cv_result = predictor.time_series_cv(
+    features,
+    n_splits=5,
+    test_size=60,      # 每折测试 60 天
+    model_type="xgboost"
+)
+
+# 输出
+{
+    "summary": {
+        "1d": {"r2_mean": 0.15, "r2_std": 0.03, "folds": 5},
+        "5d": {"r2_mean": 0.22, "r2_std": 0.04, "folds": 5},
+        "20d": {"r2_mean": 0.18, "r2_std": 0.05, "folds": 5}
+    }
+}
+```
+
+**隔离带**: 自动添加 10 天 gap 防止数据泄露
+
+---
+
 ## 流式特征准备
 
 **文件**: `predict_agent.py` → `_stream_prepare_features()`
@@ -305,6 +423,21 @@ db = get_database()
 data = db.get_concept_data(codes=['885001.TI'])
 features = p.prepare_features(data, n_jobs=8)
 print(features.columns.tolist())
+
+# 测试特征缓存
+features1 = p.prepare_features(data, use_cache=True)  # 首次计算
+features2 = p.prepare_features(data, use_cache=True)  # 从缓存加载
+
+# 查看模型版本历史
+versions = p.get_model_versions()
+print(versions)
+
+# 加载指定版本模型
+model = p.load_model(version="20260316_143022")
+
+# 时间序列交叉验证
+cv_result = p.time_series_cv(features, n_splits=5, test_size=60)
+print(cv_result["summary"])
 ```
 
 ---
@@ -315,10 +448,13 @@ print(features.columns.tolist())
 - 新增特征需确保长度与现有特征一致
 - 并行数 `n_jobs` 可根据 CPU 调整
 - 模型文件较大 (~50MB)，注意存储
+- 特征缓存默认启用，调试时可关闭 `use_cache=False`
+- 模型版本自动备份，定期清理旧版本
+- 时间序列 CV 需要足够样本量 (>300 天)
 
 ---
 
 ## 相关文档
 
-- [../data/CLAUDE.md](../data/CLAUDE.md) - 数据层
-- [../agents/CLAUDE.md](../agents/CLAUDE.md) - Agent 层
+- [../data/AGENTS.md](../data/AGENTS.md) - 数据层
+- [../agents/AGENTS.md](../agents/AGENTS.md) - Agent 层

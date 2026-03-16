@@ -260,5 +260,5 @@ print(rules['concept_sequences'])
 
 ## 相关文档
 
-- [../models/CLAUDE.md](../models/CLAUDE.md) - 模型层
-- [../agents/CLAUDE.md](../agents/CLAUDE.md) - Agent 层
+- [../models/AGENTS.md](../models/AGENTS.md) - 模型层
+- [../agents/AGENTS.md](../agents/AGENTS.md) - Agent 层
