@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Any
 import pandas as pd
 from datetime import datetime, timedelta
 from loguru import logger
-from strategies.base_strategy import BaseStrategy, StrategySignal
+from .base_strategy import BaseStrategy, StrategySignal
 
 
 class EventDrivenStrategy(BaseStrategy):

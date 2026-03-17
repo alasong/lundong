@@ -7,9 +7,9 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from strategies.register import *  # 注册所有策略
-from strategies.strategy_factory import StrategyFactory
-from strategies.multi_strategy import MultiStrategyPortfolio
+from .register import *  # 注册所有策略
+from .strategy_factory import StrategyFactory
+from .multi_strategy import MultiStrategyPortfolio
 
 
 def example_single_strategy():

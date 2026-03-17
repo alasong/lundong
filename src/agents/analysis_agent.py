@@ -2,6 +2,7 @@
 分析Agent
 负责热点识别和轮动分析
 """
+
 import pandas as pd
 from typing import Optional, Dict, Any, List
 from loguru import logger
@@ -30,7 +31,7 @@ class AnalysisAgent(BaseAgent):
         self,
         task: str = "hotspot",
         data: Optional[Dict[str, pd.DataFrame]] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         执行分析任务
@@ -51,9 +52,7 @@ class AnalysisAgent(BaseAgent):
             raise ValueError(f"未知任务类型: {task}")
 
     def _analyze_hotspot(
-        self,
-        data: Optional[Dict[str, pd.DataFrame]] = None,
-        **kwargs
+        self, data: Optional[Dict[str, pd.DataFrame]] = None, **kwargs
     ) -> Dict:
         """分析热点"""
         logger.info("开始热点分析")
@@ -73,7 +72,7 @@ class AnalysisAgent(BaseAgent):
             concept_data=concept_data,
             moneyflow_data=moneyflow_data,
             limit_data=limit_data,
-            historical_data=data.get("concept_history")
+            historical_data=data.get("concept_history"),
         )
 
         # 添加排名字段
@@ -84,24 +83,26 @@ class AnalysisAgent(BaseAgent):
 
         # 识别热点
         hotspots = self.hotspot_detector.identify_hotspots(
-            scores_df=scores,
-            top_n=10,
-            min_score=60.0
+            scores_df=scores, top_n=10, min_score=60.0
         )
 
         # 检测新出现的热点
-        emergence = self.hotspot_detector.detect_hotspot_emergence(scores) if not scores.empty else pd.DataFrame()
+        emergence = (
+            self.hotspot_detector.detect_hotspot_emergence(scores)
+            if not scores.empty
+            else pd.DataFrame()
+        )
 
         return {
             "hotspot_scores": scores.to_dict("records"),
             "top_hotspots": hotspots.to_dict("records"),
-            "emerging_hotspots": emergence.to_dict("records") if not emergence.empty else []
+            "emerging_hotspots": emergence.to_dict("records")
+            if not emergence.empty
+            else [],
         }
 
     def _analyze_rotation(
-        self,
-        data: Optional[Dict[str, pd.DataFrame]] = None,
-        **kwargs
+        self, data: Optional[Dict[str, pd.DataFrame]] = None, **kwargs
     ) -> Dict:
         """分析轮动"""
         logger.info("开始轮动分析")
@@ -116,27 +117,28 @@ class AnalysisAgent(BaseAgent):
 
         # 计算相关性矩阵
         corr_matrix = self.rotation_analyzer.compute_correlation_matrix(
-            price_data=concept_data,
-            window=20
+            price_data=concept_data, window=20
         )
 
         # 计算领涨滞后矩阵
         lead_lag_matrix = self.rotation_analyzer.compute_lead_lag_matrix(
-            price_data=concept_data,
-            max_lag=5
+            price_data=concept_data, max_lag=5
         )
 
         # 计算轮动强度指数
         rsi = self.rotation_analyzer.compute_rotation_strength_index(
-            price_data=concept_data,
-            window=20
+            price_data=concept_data, window=20
         )
 
         # 计算轮动路径
         hotspot_scores = data.get("hotspot_scores")
         if hotspot_scores is not None:
-            rotation_paths = self.rotation_analyzer.compute_rotation_path(hotspot_scores)
-            rotation_patterns = self.rotation_analyzer.compute_rotation_patterns(rotation_paths)
+            rotation_paths = self.rotation_analyzer.compute_rotation_path(
+                hotspot_scores
+            )
+            rotation_patterns = self.rotation_analyzer.compute_rotation_patterns(
+                rotation_paths
+            )
         else:
             rotation_paths = pd.DataFrame()
             rotation_patterns = {}
@@ -147,22 +149,22 @@ class AnalysisAgent(BaseAgent):
             signals = self.rotation_analyzer.identify_rotation_signal(
                 hotspot_scores=hotspot_scores,
                 correlation_matrix=corr_matrix,
-                lead_lag_matrix=lead_lag_matrix
+                lead_lag_matrix=lead_lag_matrix,
             )
 
         return {
             "correlation_matrix": corr_matrix.to_dict(),
             "lead_lag_matrix": lead_lag_matrix.to_dict(),
             "rotation_strength": rsi.to_dict() if isinstance(rsi, pd.Series) else rsi,
-            "rotation_paths": rotation_paths.to_dict("records") if not rotation_paths.empty else [],
+            "rotation_paths": rotation_paths.to_dict("records")
+            if not rotation_paths.empty
+            else [],
             "rotation_patterns": rotation_patterns,
-            "rotation_signals": signals
+            "rotation_signals": signals,
         }
 
     def _learn_patterns(
-        self,
-        data: Optional[Dict[str, pd.DataFrame]] = None,
-        **kwargs
+        self, data: Optional[Dict[str, pd.DataFrame]] = None, **kwargs
     ) -> Dict:
         """学习规律"""
         logger.info("开始规律学习")
@@ -177,18 +179,20 @@ class AnalysisAgent(BaseAgent):
             return {"error": "无热点评分数据"}
 
         # 学习轮动规则
-        rotation_paths_df = rotation_paths if rotation_paths is not None and not rotation_paths.empty else pd.DataFrame()
+        rotation_paths_df = (
+            rotation_paths
+            if rotation_paths is not None and not rotation_paths.empty
+            else pd.DataFrame()
+        )
         rules = self.pattern_learner.learn_rotation_rules(
-            hotspot_scores=hotspot_scores,
-            rotation_paths=rotation_paths_df
+            hotspot_scores=hotspot_scores, rotation_paths=rotation_paths_df
         )
 
         # 学习市场环境规则
         market_data = data.get("market")
         if market_data is not None:
             market_rules = self.pattern_learner.learn_market_context_rules(
-                hotspot_scores=hotspot_scores,
-                market_data=market_data
+                hotspot_scores=hotspot_scores, market_data=market_data
             )
             rules.update(market_rules)
 
@@ -198,9 +202,7 @@ class AnalysisAgent(BaseAgent):
         return rules
 
     def _full_analysis(
-        self,
-        data: Optional[Dict[str, pd.DataFrame]] = None,
-        **kwargs
+        self, data: Optional[Dict[str, pd.DataFrame]] = None, **kwargs
     ) -> Dict:
         """完整分析"""
         logger.info("开始完整分析")
@@ -230,16 +232,52 @@ class AnalysisAgent(BaseAgent):
 
     def _load_latest_data(self, recent_days: int = 60) -> Dict[str, pd.DataFrame]:
         """
-        加载最新数据（支持同花顺数据格式）- 优化版
-        使用并行读取加速
+        加载最新数据 - 优先从数据库加载，CSV作为备份
 
         Args:
-            recent_days: 加载最近 N 天的数据（默认 60 天，确保有足够数据用于特征计算）
+            recent_days: 加载最近 N 天的数据（默认 60 天）
         """
         data = {}
-        raw_dir = settings.raw_data_dir
 
+        # 方案1：优先从数据库加载（更快更可靠）
+        try:
+            from data.database import get_database
+
+            db = get_database()
+
+            # 获取最新日期
+            latest_date = db.get_latest_date()
+            if latest_date:
+                # 加载板块数据
+                concept_data = db.get_all_concept_data()
+                if concept_data is not None and not concept_data.empty:
+                    # 字段重命名
+                    if (
+                        "ts_code" in concept_data.columns
+                        and "concept_code" not in concept_data.columns
+                    ):
+                        concept_data = concept_data.rename(
+                            columns={"ts_code": "concept_code"}
+                        )
+                    if (
+                        "pct_change" in concept_data.columns
+                        and "pct_chg" not in concept_data.columns
+                    ):
+                        concept_data = concept_data.rename(
+                            columns={"pct_change": "pct_chg"}
+                        )
+
+                    data["concept"] = concept_data
+                    data["concept_history"] = concept_data
+                    logger.info(f"从数据库加载板块数据: {len(concept_data)} 条记录")
+                    return data
+        except Exception as e:
+            logger.warning(f"数据库加载失败: {e}，尝试从CSV加载")
+
+        # 方案2：从CSV加载（备份方案）
+        raw_dir = settings.raw_data_dir
         if not os.path.exists(raw_dir):
+            logger.warning(f"数据目录不存在: {raw_dir}")
             return data
 
         # 加载同花顺行业/概念数据 (ths_*_TI.csv 格式)
@@ -250,33 +288,40 @@ class AnalysisAgent(BaseAgent):
 
             def load_single_file(filepath):
                 try:
-                    df = pd.read_csv(filepath, dtype={
-                        'concept_code': str,
-                        'trade_date': str,
-                        'pct_chg': float,
-                        'vol': float,
-                        'close': float
-                    })
+                    df = pd.read_csv(
+                        filepath,
+                        dtype={
+                            "concept_code": str,
+                            "trade_date": str,
+                            "pct_chg": float,
+                            "vol": float,
+                            "close": float,
+                        },
+                    )
                     # 重命名字段
-                    if 'pct_change' in df.columns:
-                        df = df.rename(columns={'pct_change': 'pct_chg'})
-                    if 'ts_code' in df.columns:
-                        df = df.rename(columns={'ts_code': 'concept_code'})
+                    if "pct_change" in df.columns:
+                        df = df.rename(columns={"pct_change": "pct_chg"})
+                    if "ts_code" in df.columns:
+                        df = df.rename(columns={"ts_code": "concept_code"})
 
                     # 处理 name 字段 - 从文件名提取或使用 code
                     filename = os.path.basename(filepath)
-                    if 'name' not in df.columns:
+                    if "name" not in df.columns:
                         # 尝试从文件名提取：ths_881101_TI.csv -> 881101
-                        if filename.startswith('ths_') and '_TI.csv' in filename:
-                            code_part = filename.replace('ths_', '').replace('_TI.csv', '')
-                            df['name'] = f"板块_{code_part}"
+                        if filename.startswith("ths_") and "_TI.csv" in filename:
+                            code_part = filename.replace("ths_", "").replace(
+                                "_TI.csv", ""
+                            )
+                            df["name"] = f"板块_{code_part}"
                         else:
-                            df['name'] = df['concept_code']
-                    elif df['name'].iloc[0] == df['concept_code'].iloc[0]:
+                            df["name"] = df["concept_code"]
+                    elif df["name"].iloc[0] == df["concept_code"].iloc[0]:
                         # 如果 name 等于 code，尝试从文件名获取更好的名称
-                        if filename.startswith('ths_') and '_TI.csv' in filename:
-                            code_part = filename.replace('ths_', '').replace('_TI.csv', '')
-                            df['name'] = f"板块_{code_part}"
+                        if filename.startswith("ths_") and "_TI.csv" in filename:
+                            code_part = filename.replace("ths_", "").replace(
+                                "_TI.csv", ""
+                            )
+                            df["name"] = f"板块_{code_part}"
 
                     return df
                 except Exception as e:
@@ -285,26 +330,27 @@ class AnalysisAgent(BaseAgent):
 
             # 并行加载所有文件
             dfs = Parallel(n_jobs=-1, backend="threading")(
-                delayed(load_single_file)(os.path.join(raw_dir, f))
-                for f in ths_files
+                delayed(load_single_file)(os.path.join(raw_dir, f)) for f in ths_files
             )
             dfs = [df for df in dfs if df is not None]
 
             if dfs:
                 data["concept"] = pd.concat(dfs, ignore_index=True)
-                # 按日期排序，只保留最近的数据
+                data["concept_history"] = data["concept"]
                 if "trade_date" in data["concept"].columns:
                     data["concept"] = data["concept"].sort_values("trade_date")
                     latest_date = data["concept"]["trade_date"].max()
-                    # 转换为整数进行比较
                     try:
                         latest_date_int = int(latest_date)
-                        # 计算起始日期（考虑 recent_days 个交易日）
-                        min_date = latest_date_int - (recent_days * 100)  # 大约 recent_days 个交易日
-                        data["concept"] = data["concept"][data["concept"]["trade_date"] >= min_date]
+                        min_date = latest_date_int - (recent_days * 100)
+                        data["concept"] = data["concept"][
+                            data["concept"]["trade_date"] >= min_date
+                        ]
                     except:
                         pass
-                logger.info(f"加载了 {len(ths_files)} 个同花顺数据文件，共 {len(data['concept'])} 条记录")
+                logger.info(
+                    f"从CSV加载了 {len(ths_files)} 个文件，共 {len(data['concept'])} 条记录"
+                )
 
         return data
 

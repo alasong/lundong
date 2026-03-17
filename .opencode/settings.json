@@ -1,5 +1,5 @@
 {
-  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "$schema": "https://opencode.ai/schema/settings.json",
   "project": {
     "name": "lundong",
     "description": "A股热点轮动预测系统",
@@ -13,7 +13,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '[HOOK] 执行: $(echo \"$CLAUDE_TOOL_INPUT\" | head -c 100)'"
+            "command": "echo '[HOOK] 执行: $(echo \"$OPENCODE_TOOL_INPUT\" | head -c 100)'"
           }
         ]
       },
@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '[HOOK] 修改文件: $CLAUDE_TOOL_INPUT_PATH'"
+            "command": "echo '[HOOK] 修改文件: $OPENCODE_TOOL_INPUT_PATH'"
           }
         ]
       }
@@ -34,7 +34,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [[ \"$CLAUDE_TOOL_INPUT_PATH\" == *.py ]]; then python -m py_compile \"$CLAUDE_TOOL_INPUT_PATH\" 2>&1 && echo '[AUTO] ✓ 语法检查通过' || echo '[AUTO] ✗ 语法错误'; fi"
+            "command": "if [[ \"$OPENCODE_TOOL_INPUT_PATH\" == *.py ]]; then python -m py_compile \"$OPENCODE_TOOL_INPUT_PATH\" 2>&1 && echo '[AUTO] ✓ 语法检查通过' || echo '[AUTO] ✗ 语法错误'; fi"
           }
         ]
       }
@@ -71,7 +71,7 @@
       "Read(*)",
       "Write(src/*)",
       "Write(tests/*)",
-      "Write(.claude/*)",
+      "Write(.opencode/*)",
       "Edit(*)",
       "Glob(*)",
       "Grep(*)",
@@ -125,10 +125,10 @@
       },
       {
         "name": "doc-writer",
-        "description": "文档撰写专家，更新 CLAUDE.md、README、代码注释",
+        "description": "文档撰写专家，更新 AGENTS.md、README、代码注释",
         "model": "sonnet",
         "tools": ["Read", "Write", "Edit"],
-        "systemPrompt": "你是 lundong 项目的文档专家。负责：1) 更新 CLAUDE.md 多层文档 2) 维护 README 3) 编写代码注释。文档风格简洁准确，使用中文。"
+        "systemPrompt": "你是 lundong 项目的文档专家。负责：1) 更新 AGENTS.md 多层文档 2) 维护 README 3) 编写代码注释。文档风格简洁准确，使用中文。"
       }
     ],
     "orchestration": {
@@ -168,7 +168,7 @@
 
   "memory": {
     "enabled": true,
-    "path": ".claude/memory",
+    "path": ".opencode/memory",
     "autoSave": true
   }
 }

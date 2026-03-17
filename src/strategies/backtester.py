@@ -14,9 +14,9 @@ from typing import Dict, List, Optional, Callable
 from datetime import datetime
 from loguru import logger
 
-from strategies.mean_reversion import MeanReversionStrategy
-from strategies.momentum import MomentumStrategy
-from strategies.event_driven import EventDrivenStrategy
+from .mean_reversion import MeanReversionStrategy
+from .momentum import MomentumStrategy
+from .event_driven import EventDrivenStrategy
 
 
 class StrategyBacktester:
