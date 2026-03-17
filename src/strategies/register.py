@@ -41,6 +41,14 @@ StrategyFactory.register_strategy("capital_flow", CapitalFlowStrategy)
 StrategyFactory.register_strategy("quality", QualityStrategy)
 StrategyFactory.register_strategy("small_cap", SmallCapStrategy)
 
+# 打板策略
+from strategies.enhanced_dragon_head import EnhancedDragonHeadStrategy
+from strategies.first_limit import FirstLimitStrategy
+from strategies.one_to_two import OneToTwoStrategy
+StrategyFactory.register_strategy("enhanced_dragon_head", EnhancedDragonHeadStrategy)
+StrategyFactory.register_strategy("first_limit", FirstLimitStrategy)
+StrategyFactory.register_strategy("one_to_two", OneToTwoStrategy)
+
 # 预留其他策略注册位置
 # from strategies.multi_factor import MultiFactorStrategy
 # from strategies.statistical_arbitrage import StatisticalArbitrageStrategy
