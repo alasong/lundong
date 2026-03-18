@@ -1292,32 +1292,24 @@ def main():
                 result = collector.collect_all(
                     start_date=start_date,
                     end_date=end_date,
-                    include_csi500=True,
-                    include_gem=True,
-                    include_star=True,
+                    include_all=True,
                 )
             elif args.stock_type == "csi500":
                 result = collector.collect_all(
                     start_date=start_date,
                     end_date=end_date,
                     include_csi500=True,
-                    include_gem=False,
-                    include_star=False,
                 )
             elif args.stock_type == "gem":
                 result = collector.collect_all(
                     start_date=start_date,
                     end_date=end_date,
-                    include_csi500=False,
                     include_gem=True,
-                    include_star=False,
                 )
             elif args.stock_type == "star":
                 result = collector.collect_all(
                     start_date=start_date,
                     end_date=end_date,
-                    include_csi500=False,
-                    include_gem=False,
                     include_star=True,
                 )
 

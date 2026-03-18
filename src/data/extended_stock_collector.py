@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 扩展股票数据采集器
-采集中证500成分股、创业板、科创板数据
+采集全量A股、中证500成分股、创业板、科创板数据
 """
 import sys
 import os
@@ -49,6 +49,38 @@ class ExtendedStockCollector:
             self.REQUEST_TIMES = []
 
         self.REQUEST_TIMES.append(time.time())
+
+    def get_all_stocks(self) -> List[str]:
+        """获取全部A股股票列表（沪深两市，排除北交所）"""
+        logger.info("获取全部A股股票列表...")
+
+        all_codes = []
+
+        # 获取上交所股票
+        self._check_rate_limit()
+        df_sse = self.pro.stock_basic(exchange='SSE', list_status='L', fields='ts_code,name')
+        if df_sse is not None and not df_sse.empty:
+            # 排除科创板(688)和北交所
+            sse_codes = df_sse[~df_sse['ts_code'].str.startswith('689')]['ts_code'].tolist()
+            all_codes.extend(sse_codes)
+            logger.info(f"上交所股票: {len(sse_codes)} 只")
+
+        # 获取深交所股票
+        self._check_rate_limit()
+        df_szse = self.pro.stock_basic(exchange='SZSE', list_status='L', fields='ts_code,name')
+        if df_szse is not None and not df_szse.empty:
+            # 包含主板、中小板、创业板
+            szse_codes = df_szse['ts_code'].tolist()
+            all_codes.extend(szse_codes)
+            logger.info(f"深交所股票: {len(szse_codes)} 只")
+
+        # 获取北交所股票（排除）
+        # 北交所代码以 8 或 4 开头，如 8xxxxx.BJ
+
+        # 去重
+        all_codes = list(set(all_codes))
+        logger.info(f"全部A股: {len(all_codes)} 只")
+        return all_codes
 
     def get_csi500_constituents(self) -> List[str]:
         """获取中证500成分股"""
@@ -97,8 +129,10 @@ class ExtendedStockCollector:
         logger.info(f"科创板股票: {len(codes)} 只")
         return codes
 
-    def get_all_target_stocks(self) -> Dict[str, List[str]]:
+    def get_all_target_stocks(self, include_all: bool = False) -> Dict[str, List[str]]:
         """获取所有目标股票"""
+        if include_all:
+            return {'all': self.get_all_stocks()}
         return {
             'csi500': self.get_csi500_constituents(),
             'gem': self.get_gem_stocks(),
@@ -254,16 +288,18 @@ class ExtendedStockCollector:
         self,
         start_date: str = '20200101',
         end_date: str = None,
-        include_csi500: bool = True,
-        include_gem: bool = True,
-        include_star: bool = True
+        include_all: bool = False,
+        include_csi500: bool = False,
+        include_gem: bool = False,
+        include_star: bool = False
     ) -> Dict:
         """
-        采集所有目标股票数据
+        采集股票数据
 
         Args:
             start_date: 开始日期
             end_date: 结束日期（默认今天）
+            include_all: 是否采集全部A股（优先级最高）
             include_csi500: 是否包含中证500
             include_gem: 是否包含创业板
             include_star: 是否包含科创板
@@ -272,27 +308,40 @@ class ExtendedStockCollector:
             end_date = datetime.now().strftime('%Y%m%d')
 
         logger.info("=" * 60)
-        logger.info("开始采集扩展股票数据")
+        logger.info("开始采集股票数据")
         logger.info("=" * 60)
 
         # 获取股票列表
         all_codes = []
         sources = {}
 
-        if include_csi500:
-            codes = self.get_csi500_constituents()
+        # 优先处理全量采集
+        if include_all:
+            codes = self.get_all_stocks()
             all_codes.extend(codes)
-            sources['csi500'] = len(codes)
+            sources['all'] = len(codes)
+        else:
+            # 按指定类型采集
+            if include_csi500:
+                codes = self.get_csi500_constituents()
+                all_codes.extend(codes)
+                sources['csi500'] = len(codes)
 
-        if include_gem:
-            codes = self.get_gem_stocks()
-            all_codes.extend(codes)
-            sources['gem'] = len(codes)
+            if include_gem:
+                codes = self.get_gem_stocks()
+                all_codes.extend(codes)
+                sources['gem'] = len(codes)
 
-        if include_star:
-            codes = self.get_star_stocks()
-            all_codes.extend(codes)
-            sources['star'] = len(codes)
+            if include_star:
+                codes = self.get_star_stocks()
+                all_codes.extend(codes)
+                sources['star'] = len(codes)
+
+            # 如果没有指定任何类型，默认采集全部
+            if not sources:
+                codes = self.get_all_stocks()
+                all_codes.extend(codes)
+                sources['all'] = len(codes)
 
         # 去重
         all_codes = list(set(all_codes))
