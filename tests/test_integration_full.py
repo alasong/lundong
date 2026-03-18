@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 import pandas as pd
 from loguru import logger
 from datetime import datetime
+import pytest
 
 # 导入所有模块
 from data.database import get_database
@@ -25,6 +26,7 @@ from trading.rebalance_scheduler import RebalanceScheduler
 from evaluation.enhanced_backtester import EnhancedBacktester
 
 
+@pytest.mark.slow
 def test_all_modules():
     """测试所有模块"""
     print("=" * 70)
