@@ -1,0 +1,15 @@
+{
+    "name": "daban_v1",
+    "display_name": "打板策略 V1",
+    "version": "1.0.0",
+    "author": "system",
+    "description": "首板+一进二+龙头股组合策略",
+    "strategy_class": "DabanV1Strategy",
+    "entry_file": "strategy.py",
+    "params_file": "params.json",
+    "tags": ["daban", "limit-up", "short-term"],
+    "risk_level": "high",
+    "expected_return": "200-300%",
+    "dependencies": [],
+    "enabled": true
+}

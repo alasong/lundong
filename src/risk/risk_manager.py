@@ -2,6 +2,7 @@
 风险管理模块
 包含止损策略、仓位管理、风险预算、黑名单等功能
 """
+
 import pandas as pd
 import numpy as np
 import sqlite3
@@ -39,7 +40,7 @@ class RiskManager:
         current_prices: pd.DataFrame,
         stop_loss_type: str = "trailing",
         fixed_stop_loss_pct: float = 0.08,
-        trailing_stop_loss_pct: float = 0.10
+        trailing_stop_loss_pct: float = 0.10,
     ) -> List[Dict]:
         """
         检查止损条件
@@ -61,16 +62,16 @@ class RiskManager:
         sell_list = []
 
         for pos in positions:
-            ts_code = pos['ts_code']
-            cost_price = pos['cost_price']
-            shares = pos['shares']
+            ts_code = pos["ts_code"]
+            cost_price = pos["cost_price"]
+            shares = pos["shares"]
 
             # 获取当前价格
-            price_row = current_prices[current_prices['ts_code'] == ts_code]
+            price_row = current_prices[current_prices["ts_code"] == ts_code]
             if price_row.empty:
                 continue
 
-            current_price = price_row.iloc[0]['close']
+            current_price = price_row.iloc[0]["close"]
 
             # 计算盈亏比例
             profit_loss_pct = (current_price - cost_price) / cost_price
@@ -86,11 +87,11 @@ class RiskManager:
 
             elif stop_loss_type == "trailing":
                 # 移动止损：从最高点回撤超过阈值
-                highest_price = pos.get('highest_price', cost_price)
+                highest_price = pos.get("highest_price", cost_price)
                 highest_price = max(highest_price, current_price)
 
                 # 更新最高价
-                pos['highest_price'] = highest_price
+                pos["highest_price"] = highest_price
 
                 # 从最高点回撤
                 drawdown_from_peak = (highest_price - current_price) / highest_price
@@ -105,22 +106,20 @@ class RiskManager:
                     reason = f"固定止损保护：亏损{profit_loss_pct:.1%}"
 
             if should_sell:
-                sell_list.append({
-                    'ts_code': ts_code,
-                    'shares': shares,
-                    'reason': reason,
-                    'current_price': current_price,
-                    'cost_price': cost_price,
-                    'profit_loss_pct': profit_loss_pct
-                })
+                sell_list.append(
+                    {
+                        "ts_code": ts_code,
+                        "shares": shares,
+                        "reason": reason,
+                        "current_price": current_price,
+                        "cost_price": cost_price,
+                        "profit_loss_pct": profit_loss_pct,
+                    }
+                )
 
         return sell_list
 
-    def calculate_position_risk(
-        self,
-        ts_code: str,
-        days: int = 20
-    ) -> Dict:
+    def calculate_position_risk(self, ts_code: str, days: int = 20) -> Dict:
         """
         计算单个股票的风险指标
 
@@ -132,9 +131,10 @@ class RiskManager:
             风险指标字典
         """
         from datetime import timedelta
+
         # 计算日期范围
-        end_date = datetime.now().strftime('%Y%m%d')
-        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
+        end_date = datetime.now().strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
 
         df = self.db.get_stock_data(ts_code, start_date, end_date)
 
@@ -142,9 +142,9 @@ class RiskManager:
             return {}
 
         # 计算风险指标
-        returns = df['pct_chg'] / 100
+        returns = df["pct_chg"] / 100
         volatility = returns.std() * np.sqrt(252)  # 年化波动率
-        max_drawdown = self._calculate_max_drawdown(df['close'])
+        max_drawdown = self._calculate_max_drawdown(df["close"])
 
         # VaR (95% 置信度)
         var_95 = returns.quantile(0.05)
@@ -153,12 +153,12 @@ class RiskManager:
         cvar_95 = returns[returns <= var_95].mean()
 
         return {
-            'ts_code': ts_code,
-            'volatility': volatility,
-            'max_drawdown': max_drawdown,
-            'var_95': var_95,
-            'cvar_95': cvar_95 if not np.isnan(cvar_95) else var_95,
-            'avg_return': returns.mean() * 252,
+            "ts_code": ts_code,
+            "volatility": volatility,
+            "max_drawdown": max_drawdown,
+            "var_95": var_95,
+            "cvar_95": cvar_95 if not np.isnan(cvar_95) else var_95,
+            "avg_return": returns.mean() * 252,
         }
 
     def _calculate_max_drawdown(self, prices: pd.Series) -> float:
@@ -174,31 +174,41 @@ class RiskManager:
         获取黑名单股票列表
 
         包括：
-        - ST、*ST 股票
         - 财务造假嫌疑
         - 重大违规
         - 长期停牌
+        - 其他风险股票
         """
         # 缓存 1 小时
         now = datetime.now()
-        if (self.blacklist_cache is not None and
-            self.blacklist_cache_time is not None and
-            now - self.blacklist_cache_time < timedelta(hours=1)):
+        if (
+            self.blacklist_cache is not None
+            and self.blacklist_cache_time is not None
+            and now - self.blacklist_cache_time < timedelta(hours=1)
+        ):
             return self.blacklist_cache
 
         blacklist = []
 
         try:
-            conn = sqlite3.connect('data/stock.db')
+            conn = sqlite3.connect("data/stock.db")
             cursor = conn.cursor()
 
-            # 查询股票名称包含 ST 的（从成分股表中）
+            # ST/*ST 股票已不再自动加入黑名单
+            # 用户可以选择性地过滤 ST/*ST 股票（通过 StockFilter 类）
             cursor.execute("""
-                SELECT DISTINCT stock_code FROM concept_constituent
+                SELECT DISTINCT stock_code, stock_name FROM concept_constituent
                 WHERE stock_name LIKE '%ST%' OR stock_name LIKE '%*ST%'
             """)
-            st_stocks = [row[0] for row in cursor.fetchall()]
-            blacklist.extend(st_stocks)
+            st_stocks = cursor.fetchall()
+            if st_stocks:
+                logger.info(
+                    f"发现 {len(st_stocks)} 只 ST/*ST 股票（已包含在筛选范围内）"
+                )
+                for code, name in st_stocks[:5]:
+                    logger.debug(f"ST/*ST 股票：{code} {name}")
+                if len(st_stocks) > 5:
+                    logger.debug(f"... 等 {len(st_stocks)} 只")
 
             # 查询停牌超过 30 天的股票
             cursor.execute("""
@@ -225,10 +235,7 @@ class RiskManager:
         logger.info(f"黑名单股票：{len(blacklist)} 只")
         return blacklist
 
-    def filter_blacklist(
-        self,
-        stock_list: List[str]
-    ) -> List[str]:
+    def filter_blacklist(self, stock_list: List[str]) -> List[str]:
         """
         过滤黑名单股票
 
@@ -263,7 +270,7 @@ class RiskManager:
         volatility: float,
         target_risk: float = 0.15,
         max_position_pct: float = 0.10,
-        min_position_pct: float = 0.02
+        min_position_pct: float = 0.02,
     ) -> int:
         """
         计算单只股票的合理仓位（基于波动率调整）
@@ -285,17 +292,21 @@ class RiskManager:
         base_risk_weight = 1.0 / max(volatility, 0.01)
 
         # 归一化到目标风险
-        risk_adjusted_weight = (base_risk_weight * target_risk)
+        risk_adjusted_weight = base_risk_weight * target_risk
 
         # 计算目标仓位比例
-        position_pct = min(max(risk_adjusted_weight, min_position_pct), max_position_pct)
+        position_pct = min(
+            max(risk_adjusted_weight, min_position_pct), max_position_pct
+        )
 
         # 计算金额和股数
         position_value = total_capital * position_pct
         shares = int(position_value / current_price / 100) * 100  # 整百股
 
-        logger.debug(f"{ts_code}: 波动率={volatility:.1%}, "
-                    f"仓位比例={position_pct:.1%}, 股数={shares}")
+        logger.debug(
+            f"{ts_code}: 波动率={volatility:.1%}, "
+            f"仓位比例={position_pct:.1%}, 股数={shares}"
+        )
 
         return shares
 
@@ -304,7 +315,7 @@ class RiskManager:
         positions: List[Dict],
         current_prices: pd.DataFrame,
         confidence: float = 0.95,
-        days: int = 1
+        days: int = 1,
     ) -> float:
         """
         计算组合 VaR（Value at Risk）
@@ -321,11 +332,11 @@ class RiskManager:
         # 获取各股票的日波动率
         volatilities = {}
         for pos in positions:
-            ts_code = pos['ts_code']
+            ts_code = pos["ts_code"]
             risk_metrics = self.calculate_position_risk(ts_code, days=60)
             if risk_metrics:
                 # 年化转日化
-                daily_vol = risk_metrics['volatility'] / np.sqrt(252)
+                daily_vol = risk_metrics["volatility"] / np.sqrt(252)
                 volatilities[ts_code] = daily_vol
 
         if not volatilities:
@@ -333,11 +344,12 @@ class RiskManager:
 
         # 计算组合波动率（简化：假设相关性为 0.5）
         total_value = sum(
-            pos['shares'] * current_prices[
-                current_prices['ts_code'] == pos['ts_code']
-            ].iloc[0]['close'] if not current_prices[
-                current_prices['ts_code'] == pos['ts_code']
-            ].empty else 0
+            pos["shares"]
+            * current_prices[current_prices["ts_code"] == pos["ts_code"]].iloc[0][
+                "close"
+            ]
+            if not current_prices[current_prices["ts_code"] == pos["ts_code"]].empty
+            else 0
             for pos in positions
         )
 
@@ -352,6 +364,7 @@ class RiskManager:
 
         # VaR = 组合价值 * Z 分数 * 波动率 * sqrt(天数)
         from scipy import stats
+
         z_score = stats.norm.ppf(1 - confidence)
 
         var = abs(z_score) * portfolio_vol * np.sqrt(days) * total_value
@@ -359,9 +372,7 @@ class RiskManager:
         return var
 
     def check_concentration_risk(
-        self,
-        positions: List[Dict],
-        max_sector_pct: float = 0.25
+        self, positions: List[Dict], max_sector_pct: float = 0.25
     ) -> Dict:
         """
         检查集中度风险
@@ -374,18 +385,20 @@ class RiskManager:
             风险分析结果
         """
         if not positions:
-            return {'risk_level': 'low', 'details': []}
+            return {"risk_level": "low", "details": []}
 
         # 计算板块权重
         sector_weights = {}
-        total_value = sum(pos.get('market_value', 0) for pos in positions)
+        total_value = sum(pos.get("market_value", 0) for pos in positions)
 
         if total_value <= 0:
-            return {'risk_level': 'low', 'details': []}
+            return {"risk_level": "low", "details": []}
 
         for pos in positions:
-            sector = pos.get('concept_code', 'unknown')
-            sector_weights[sector] = sector_weights.get(sector, 0) + pos.get('market_value', 0)
+            sector = pos.get("concept_code", "unknown")
+            sector_weights[sector] = sector_weights.get(sector, 0) + pos.get(
+                "market_value", 0
+            )
 
         # 转换为比例
         sector_pcts = {k: v / total_value for k, v in sector_weights.items()}
@@ -394,20 +407,26 @@ class RiskManager:
         warnings = []
         for sector, pct in sector_pcts.items():
             if pct > max_sector_pct:
-                warnings.append({
-                    'sector': sector,
-                    'current': pct,
-                    'limit': max_sector_pct,
-                    'excess': pct - max_sector_pct
-                })
+                warnings.append(
+                    {
+                        "sector": sector,
+                        "current": pct,
+                        "limit": max_sector_pct,
+                        "excess": pct - max_sector_pct,
+                    }
+                )
 
-        risk_level = 'high' if warnings else ('medium' if max(sector_pcts.values()) > 0.2 else 'low')
+        risk_level = (
+            "high"
+            if warnings
+            else ("medium" if max(sector_pcts.values()) > 0.2 else "low")
+        )
 
         return {
-            'risk_level': risk_level,
-            'sector_weights': sector_pcts,
-            'warnings': warnings,
-            'max_concentration': max(sector_pcts.values()) if sector_pcts else 0
+            "risk_level": risk_level,
+            "sector_weights": sector_pcts,
+            "warnings": warnings,
+            "max_concentration": max(sector_pcts.values()) if sector_pcts else 0,
         }
 
 
@@ -424,7 +443,7 @@ def main():
 
     # 测试个股风险
     print("\n=== 个股风险测试 ===")
-    test_stocks = ['000001.SZ', '600519.SH', '300750.SZ']
+    test_stocks = ["000001.SZ", "600519.SH", "300750.SZ"]
     for stock in test_stocks:
         metrics = rm.calculate_position_risk(stock, days=60)
         if metrics:

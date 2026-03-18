@@ -5,7 +5,7 @@
 
 from typing import Dict, List, Optional, Type
 from loguru import logger
-from strategies.base_strategy import BaseStrategy
+from .base_strategy import BaseStrategy
 
 
 class StrategyFactory:

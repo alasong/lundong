@@ -1,0 +1,17 @@
+{
+    "first_limit": {
+        "limit_up_threshold": 0.095,
+        "min_volume_ratio": 3.0,
+        "top_n_stocks": 8
+    },
+    "one_to_two": {
+        "gap_open_min": 0.01,
+        "gap_open_max": 0.06,
+        "top_n_stocks": 6
+    },
+    "risk_management": {
+        "stop_loss_pct": -0.03,
+        "take_profit_pct": 0.02,
+        "max_position_per_stock": 0.10
+    }
+}

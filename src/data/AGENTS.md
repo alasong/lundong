@@ -193,11 +193,11 @@ if len(request_times) >= api_limit * 0.8:
 **核心方法**:
 ```python
 class HighSpeedDataCollector:
-    def __init__(token, db, max_workers=20)
-    def download_batch(codes, start_date, end_date)  # 批量下载
-    def filter_valid_codes(codes)                     # 过滤无效板块
-    def _download_single(code, start, end)            # 单个下载
-    def _check_missing_dates(code, start, end)        # 检查缺失日期
+    def __init__(token, db, max_workers=None, api_limit=None)
+    def download_batch(codes, start_date, end_date)      # 批量下载
+    def filter_valid_codes(codes)                         # 过滤无效板块
+    def _download_single_no_check(code, start, end)       # 单个下载
+    def _check_missing_dates(code, start, end)            # 检查缺失日期
 ```
 
 **采集流程**:

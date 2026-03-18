@@ -39,6 +39,7 @@ data/features/
 # data/models/
 data/results/
 data/finetune*/
+data
 
 # Jupyter
 .ipynb_checkpoints

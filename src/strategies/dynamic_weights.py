@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Any
 from loguru import logger
-from strategies.evaluator import StrategyEvaluator
+from .evaluator import StrategyEvaluator
 
 
 class DynamicWeightAllocator:
