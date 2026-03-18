@@ -12,7 +12,12 @@ import pandas as pd
 # 添加 src 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import settings, ensure_directories
+from config import (
+    settings,
+    get_tushare_token,
+    validate_tushare_token,
+    ensure_directories,
+)
 from runner import SimpleRunner, print_report
 from data.name_mapper import load_name_mapping, get_block_name
 
@@ -185,6 +190,12 @@ def main():
         default="",
         help="策略参数 JSON (strategy 模式使用)",
     )
+    parser.add_argument(
+        "--force-full",
+        action="store_true",
+        default=False,
+        help="强制执行完整流程（覆盖增量更新）(full 模式使用)",
+    )
 
     args = parser.parse_args()
 
@@ -197,9 +208,14 @@ def main():
     logger.info("=" * 50)
 
     # 检查配置
-    if not settings.tushare_token:
-        logger.error("请设置 TUSHARE_TOKEN 环境变量或在.env 文件中配置")
+    token = get_tushare_token()
+    if not token:
+        logger.error("请设置 TUSHARE_TOKEN 或 TUSHARE_PREMIUM_TOKEN 环境变量")
         return
+
+    # 验证 token 格式
+    if not validate_tushare_token(token):
+        logger.warning(f"Token 格式可能无效（应为 40 位十六进制字符串）")
 
     # 创建运行器
     runner = SimpleRunner()
@@ -664,25 +680,20 @@ def main():
             print("=" * 70 + "\n")
 
         elif args.mode == "fast":
-            # 高速并发采集（默认 8 线程，避免触发 API 限流）
-            logger.info("执行高速并发采集（8 线程，智能限流）")
+            max_workers = settings.data_collection.get("max_workers", 5)
+            logger.info(f"执行高速并发采集（{max_workers} 线程，智能限流）")
             from data.fast_collector import HighSpeedDataCollector
 
-            if not settings.tushare_token:
-                logger.error("请设置 TUSHARE_TOKEN")
+            token = get_tushare_token()
+            if not token:
+                logger.error("请设置 TUSHARE_TOKEN 或 TUSHARE_PREMIUM_TOKEN")
                 return
 
             start_date = args.start_date or "20200101"
             end_date = args.end_date or datetime.now().strftime("%Y%m%d")
 
-            collector = HighSpeedDataCollector(
-                token=settings.tushare_token,
-                max_workers=8,  # 8 线程并发（避免触发 500 次/分钟限流）
-                api_limit=450,  # API 每分钟限制 450 次（预留缓冲）
-            )
+            collector = HighSpeedDataCollector(token=token)
 
-            # 下载所有板块历史数据
-            # sector_type: all=全部板块，concept=概念板块，industry=行业板块，region=地区板块
             collector.download_all_history(
                 start_date,
                 end_date,
@@ -1281,32 +1292,24 @@ def main():
                 result = collector.collect_all(
                     start_date=start_date,
                     end_date=end_date,
-                    include_csi500=True,
-                    include_gem=True,
-                    include_star=True,
+                    include_all=True,
                 )
             elif args.stock_type == "csi500":
                 result = collector.collect_all(
                     start_date=start_date,
                     end_date=end_date,
                     include_csi500=True,
-                    include_gem=False,
-                    include_star=False,
                 )
             elif args.stock_type == "gem":
                 result = collector.collect_all(
                     start_date=start_date,
                     end_date=end_date,
-                    include_csi500=False,
                     include_gem=True,
-                    include_star=False,
                 )
             elif args.stock_type == "star":
                 result = collector.collect_all(
                     start_date=start_date,
                     end_date=end_date,
-                    include_csi500=False,
-                    include_gem=False,
                     include_star=True,
                 )
 
@@ -1319,6 +1322,39 @@ def main():
             print(f"  失败: {result['stats']['fail']}")
             print(f"  总记录数: {result['stats']['records']:,}")
             print("=" * 70 + "\n")
+
+        elif args.mode == "strategy":
+            # 策略管理模式 - 需要单独处理子命令
+            import sys
+            import subprocess
+
+            # 获取命令行参数，找到 'strategy' 后的部分
+            try:
+                strategy_idx = sys.argv.index("--mode") + 1
+                if (
+                    strategy_idx < len(sys.argv)
+                    and sys.argv[strategy_idx] == "strategy"
+                ):
+                    # 调用策略 CLI 模块
+                    cli_args = ["python", "-m", "strategies.cli"]
+                    # 添加后续参数
+                    cli_args.extend(sys.argv[strategy_idx + 1 :])
+
+                    # 执行策略 CLI
+                    result = subprocess.run(
+                        cli_args,
+                        cwd=os.path.dirname(os.path.abspath(__file__)),
+                        capture_output=False,
+                        text=True,
+                    )
+                    return
+            except ValueError:
+                pass
+
+            # 如果没有子命令，显示帮助
+            from strategies.cli import main as strategy_cli_main
+
+            strategy_cli_main()
 
     except Exception as e:
         logger.error(f"执行失败：{e}")

@@ -4,6 +4,7 @@
 高速数据采集模块
 支持高并发、断点续传、批量下载、实时写入数据库、自动补全缺失数据
 """
+
 import os
 import sys
 import time
@@ -24,20 +25,31 @@ from data.database import SQLiteDatabase, get_database
 class HighSpeedDataCollector:
     """高速数据采集器（基于 SQLite 数据库）"""
 
-    def __init__(self, token: str, db: SQLiteDatabase = None, max_workers: int = 20, api_limit: int = 450):
+    def __init__(
+        self,
+        token: str,
+        db: SQLiteDatabase = None,
+        max_workers: int = None,
+        api_limit: int = None,
+    ):
         """
         初始化采集器
 
         Args:
             token: Tushare token
             db: 数据库实例，如果为 None 则使用全局单例
-            max_workers: 最大并发数（默认 20）
-            api_limit: API 每分钟请求限制（默认 450，预留缓冲）
+            max_workers: 最大并发数（默认从配置读取）
+            api_limit: API 每分钟请求限制（默认从配置读取）
         """
+        config = settings.data_collection
+        self.max_workers = max_workers or config.get("max_workers", 5)
+        self.api_limit = api_limit or config.get("api_limit", 450)
+        self.target_days = config.get("target_days", 250)
+        self.retry_times = config.get("retry_times", 3)
+        self.retry_wait = config.get("retry_wait", 0.5)
+
         self.client = TushareTHSClient(token)
         self.db = db or get_database()
-        self.max_workers = max_workers
-        self.api_limit = api_limit
         self.downloaded_count = 0
         self.skipped_count = 0
         self.failed_count = 0
@@ -92,7 +104,9 @@ class HighSpeedDataCollector:
             current += timedelta(days=1)
         return dates
 
-    def _check_missing_dates(self, ts_code: str, start_date: str, end_date: str) -> List[str]:
+    def _check_missing_dates(
+        self, ts_code: str, start_date: str, end_date: str
+    ) -> List[str]:
         """
         检查缺失的交易日期
 
@@ -106,7 +120,7 @@ class HighSpeedDataCollector:
         """
         # 获取该板块已有的数据
         df = self.db.get_data_range(ts_code, start_date, end_date)
-        existing_dates = set(df['trade_date'].tolist()) if not df.empty else set()
+        existing_dates = set(df["trade_date"].tolist()) if not df.empty else set()
 
         # 生成所有交易日
         all_dates = self._get_trade_dates(start_date, end_date)
@@ -135,9 +149,7 @@ class HighSpeedDataCollector:
                 self._check_api_limit()
 
                 df = self.client.pro.ths_daily(
-                    ts_code=code,
-                    start_date=date,
-                    end_date=date
+                    ts_code=code, start_date=date, end_date=date
                 )
                 if df is not None and len(df) > 0:
                     self.db.save_concept_daily_batch(df, replace=True)
@@ -155,9 +167,7 @@ class HighSpeedDataCollector:
                     # 重试一次
                     try:
                         df = self.client.pro.ths_daily(
-                            ts_code=code,
-                            start_date=date,
-                            end_date=date
+                            ts_code=code, start_date=date, end_date=date
                         )
                         if df is not None and len(df) > 0:
                             self.db.save_concept_daily_batch(df, replace=True)
@@ -168,17 +178,18 @@ class HighSpeedDataCollector:
                     logger.warning(f"补全失败：{code} {date} - {str(e)[:50]}")
         return filled
 
-    def _should_redownload(self, ts_code: str, target_days: int = 250) -> bool:
+    def _should_redownload(self, ts_code: str, target_days: int = None) -> bool:
         """
         判断是否需要重新下载（从数据库检查）
 
         Args:
             ts_code: 板块代码
-            target_days: 目标天数
+            target_days: 目标天数（默认从配置读取）
 
         Returns:
             是否需要重新下载
         """
+        target_days = target_days or self.target_days
         # 从数据库检查数据是否存在
         latest_date = self.db.get_latest_date(ts_code)
 
@@ -186,13 +197,13 @@ class HighSpeedDataCollector:
             return True  # 没有数据，需要下载
 
         # 检查数据量
-        df = self.db.get_data_range(ts_code, '20200101', latest_date)
+        df = self.db.get_data_range(ts_code, "20200101", latest_date)
         if len(df) < target_days:
             return True
 
         # 检查最新日期是否是最近 3 天内的
         today = datetime.now()
-        latest = datetime.strptime(str(latest_date), '%Y%m%d')
+        latest = datetime.strptime(str(latest_date), "%Y%m%d")
         days_diff = (today - latest).days
 
         return days_diff > 3
@@ -215,8 +226,8 @@ class HighSpeedDataCollector:
             # 测试获取 1 天数据
             df = self.client.pro.ths_daily(
                 ts_code=ts_code,
-                start_date=(datetime.now() - timedelta(days=10)).strftime('%Y%m%d'),
-                end_date=(datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
+                start_date=(datetime.now() - timedelta(days=10)).strftime("%Y%m%d"),
+                end_date=(datetime.now() - timedelta(days=1)).strftime("%Y%m%d"),
             )
             return df is not None and len(df) > 0
         except Exception:
@@ -245,9 +256,11 @@ class HighSpeedDataCollector:
         logger.info(f"有效板块：{len(valid_codes)} 个，无效板块：{invalid_count} 个")
         return valid_codes
 
-    def _download_single(self, code: str, name: str, start_date: str, end_date: str) -> bool:
+    def _download_single_no_check(
+        self, code: str, name: str, start_date: str, end_date: str
+    ) -> bool:
         """
-        下载单个板块数据并写入数据库
+        下载单个板块数据并写入数据库（只下载不完整数据，自动补全缺失）
 
         Args:
             code: 板块代码
@@ -258,78 +271,23 @@ class HighSpeedDataCollector:
         Returns:
             是否成功
         """
-        # 检查是否需要重新下载
+        # 检查是否需要重新下载（数据完整性检查）
         if not self._should_redownload(code):
             with self._lock:
                 self.skipped_count += 1
-            logger.debug(f"跳过 {code} ({name}): 数据已存在且最新")
+            logger.debug(f"跳过 {code} ({name}): 数据已存在且完整")
             return True
 
         try:
-            # 使用 ths_daily 接口下载
-            for retry in range(3):
+            for retry in range(self.retry_times):
                 try:
-                    df = self.client.pro.ths_daily(
-                        ts_code=code,
-                        start_date=start_date,
-                        end_date=end_date
-                    )
-
-                    if df is not None and len(df) > 0:
-                        # 直接写入数据库（实时去重）
-                        self.db.save_concept_daily_batch(df, replace=True)
-                        with self._lock:
-                            self.downloaded_count += 1
-
-                        # 进度追踪
-                        self._log_progress(f"下载完成：{code} ({name}) - {len(df)} 条记录")
-                        return True
-                    else:
-                        logger.warning(f"空数据：{code}")
-                        return False
-
-                except Exception as e:
-                    if retry < 2:
-                        wait_time = (retry + 1) * 0.5
-                        logger.warning(f"下载失败，{wait_time}s 后重试：{code} - {str(e)[:50]}")
-                        time.sleep(wait_time)
-                    else:
-                        raise
-
-        except Exception as e:
-            with self._lock:
-                self.failed_count += 1
-            logger.error(f"下载失败：{code} ({name}) - {str(e)[:100]}")
-            return False
-
-    def _download_single_no_check(self, code: str, name: str, start_date: str, end_date: str) -> bool:
-        """
-        下载单个板块数据并写入数据库（不检查是否已存在，强制下载，自动补全缺失）
-
-        Args:
-            code: 板块代码
-            name: 板块名称
-            start_date: 开始日期
-            end_date: 结束日期
-
-        Returns:
-            是否成功
-        """
-        try:
-            # 使用 ths_daily 接口下载
-            for retry in range(3):
-                try:
-                    # 检查 API 限流
                     self._check_api_limit()
 
                     df = self.client.pro.ths_daily(
-                        ts_code=code,
-                        start_date=start_date,
-                        end_date=end_date
+                        ts_code=code, start_date=start_date, end_date=end_date
                     )
 
                     if df is not None and len(df) > 0:
-                        # 直接写入数据库（实时去重）
                         self.db.save_concept_daily_batch(df, replace=True)
                         with self._lock:
                             self.downloaded_count += 1
@@ -338,14 +296,15 @@ class HighSpeedDataCollector:
                         return True
                     else:
                         logger.debug(f"空数据（Tushare 接口不支持）：{code} - {name}")
-                        # 记录无效板块到列表，后续可过滤
                         self._invalid_codes.add(code)
                         return False
 
                 except Exception as e:
-                    if retry < 2:
-                        wait_time = (retry + 1) * 0.5
-                        logger.warning(f"下载失败，{wait_time}s 后重试：{code} - {str(e)[:50]}")
+                    if retry < self.retry_times - 1:
+                        wait_time = (retry + 1) * self.retry_wait
+                        logger.warning(
+                            f"下载失败，{wait_time}s 后重试：{code} - {str(e)[:50]}"
+                        )
                         time.sleep(wait_time)
                     else:
                         raise
@@ -356,7 +315,9 @@ class HighSpeedDataCollector:
             logger.error(f"下载失败：{code} ({name}) - {str(e)[:100]}")
             return False
 
-    def _check_and_fill_missing(self, code: str, name: str, start_date: str, end_date: str):
+    def _check_and_fill_missing(
+        self, code: str, name: str, start_date: str, end_date: str
+    ):
         """
         检查并补全缺失的日期数据
 
@@ -372,14 +333,18 @@ class HighSpeedDataCollector:
             with self._lock:
                 self.missing_filled += filled
             if filled > 0:
-                logger.info(f"检查完整性：{code} ({name}) 补全 {filled}/{len(missing)} 天缺失数据")
+                logger.info(
+                    f"检查完整性：{code} ({name}) 补全 {filled}/{len(missing)} 天缺失数据"
+                )
 
     def _log_progress(self, message: str):
         """记录进度"""
         now = time.time()
         if now - self.last_progress_time > 5:  # 每 5 秒输出一次
             with self._lock:
-                logger.info(f"[进度] 已下载：{self.downloaded_count}, 跳过：{self.skipped_count}, 失败：{self.failed_count}")
+                logger.info(
+                    f"[进度] 已下载：{self.downloaded_count}, 跳过：{self.skipped_count}, 失败：{self.failed_count}"
+                )
             self.last_progress_time = now
 
     def download_batch_concurrent(
@@ -388,7 +353,7 @@ class HighSpeedDataCollector:
         start_date: str,
         end_date: str,
         name_mapping: Optional[Dict[str, str]] = None,
-        max_workers: int = None
+        max_workers: int = None,
     ):
         """
         高并发批量下载板块数据（多线程）
@@ -403,9 +368,7 @@ class HighSpeedDataCollector:
         if max_workers is None:
             max_workers = self.max_workers
 
-        # 降低并发数以避免触发 API 限流
-        # Tushare 限制 500 次/分钟，每个线程约 2 秒完成一个请求，所以 8 个线程比较安全
-        actual_workers = min(max_workers, 8)
+        actual_workers = max_workers
 
         total = len(codes)
         logger.info(f"开始高并发下载：{total} 个板块，{actual_workers} 个线程")
@@ -420,8 +383,7 @@ class HighSpeedDataCollector:
                 name = name_mapping.get(code, "未知") if name_mapping else "未知"
                 # 提交下载任务
                 future = executor.submit(
-                    self._download_single_no_check,
-                    code, name, start_date, end_date
+                    self._download_single_no_check, code, name, start_date, end_date
                 )
                 futures[future] = (i + 1, code, name)
 
@@ -443,7 +405,7 @@ class HighSpeedDataCollector:
         logger.info(f"跳过：{self.skipped_count}")
         logger.info(f"失败：{self.failed_count}")
         logger.info(f"耗时：{elapsed:.1f}s")
-        logger.info(f"平均速度：{total/elapsed:.1f} 板块/秒")
+        logger.info(f"平均速度：{total / elapsed:.1f} 板块/秒")
 
         # 数据库统计
         stats = self.db.get_statistics()
@@ -457,7 +419,7 @@ class HighSpeedDataCollector:
         start_date: str,
         end_date: str,
         name_mapping: Optional[Dict[str, str]] = None,
-        concurrent: bool = True
+        concurrent: bool = True,
     ):
         """
         批量下载板块数据并写入数据库（默认高并发）
@@ -481,7 +443,7 @@ class HighSpeedDataCollector:
         codes: List[str],
         start_date: str,
         end_date: str,
-        name_mapping: Optional[Dict[str, str]] = None
+        name_mapping: Optional[Dict[str, str]] = None,
     ):
         """顺序下载（用于兼容）"""
         total = len(codes)
@@ -519,7 +481,7 @@ class HighSpeedDataCollector:
         end_date: str,
         output_file: str = None,
         concurrent: bool = True,
-        sector_type: str = "all"
+        sector_type: str = "all",
     ):
         """
         下载所有板块历史数据到数据库
@@ -547,62 +509,70 @@ class HighSpeedDataCollector:
             # 下载所有主要板块类型（881 行业、882 地区、885 概念）
             # 排除北交所板块（87xxxx）
             target_codes = indices[
-                indices['ts_code'].str.startswith(('881', '882', '885'), na=False) &
-                ~indices['ts_code'].str.startswith('87', na=False)
+                indices["ts_code"].str.startswith(("881", "882", "885"), na=False)
+                & ~indices["ts_code"].str.startswith("87", na=False)
             ]
-            logger.info(f"发现 {len(target_codes)} 个板块（行业 + 地区 + 概念，不含北交所）")
+            logger.info(
+                f"发现 {len(target_codes)} 个板块（行业 + 地区 + 概念，不含北交所）"
+            )
             # 细分统计
-            industry_count = len(indices[indices['ts_code'].str.startswith('881', na=False)])
-            region_count = len(indices[indices['ts_code'].str.startswith('882', na=False)])
-            concept_count = len(indices[indices['ts_code'].str.startswith('885', na=False)])
+            industry_count = len(
+                indices[indices["ts_code"].str.startswith("881", na=False)]
+            )
+            region_count = len(
+                indices[indices["ts_code"].str.startswith("882", na=False)]
+            )
+            concept_count = len(
+                indices[indices["ts_code"].str.startswith("885", na=False)]
+            )
             logger.info(f"  - 行业板块 (881): {industry_count} 个")
             logger.info(f"  - 地区板块 (882): {region_count} 个")
             logger.info(f"  - 概念板块 (885): {concept_count} 个")
         elif sector_type == "concept":
             # 排除北交所板块（87xxxx）
             target_codes = indices[
-                indices['ts_code'].str.startswith('885', na=False) &
-                ~indices['ts_code'].str.startswith('87', na=False)
+                indices["ts_code"].str.startswith("885", na=False)
+                & ~indices["ts_code"].str.startswith("87", na=False)
             ]
             logger.info(f"发现 {len(target_codes)} 个概念板块（不含北交所）")
         elif sector_type == "industry":
-            target_codes = indices[indices['ts_code'].str.startswith('881', na=False)]
+            target_codes = indices[indices["ts_code"].str.startswith("881", na=False)]
             logger.info(f"发现 {len(target_codes)} 个行业板块")
         elif sector_type == "region":
-            target_codes = indices[indices['ts_code'].str.startswith('882', na=False)]
+            target_codes = indices[indices["ts_code"].str.startswith("882", na=False)]
             logger.info(f"发现 {len(target_codes)} 个地区板块")
         else:
             # 默认下载所有主要板块（排除北交所 87xxxx）
             target_codes = indices[
-                indices['ts_code'].str.startswith(('881', '882', '885'), na=False) &
-                ~indices['ts_code'].str.startswith('87', na=False)
+                indices["ts_code"].str.startswith(("881", "882", "885"), na=False)
+                & ~indices["ts_code"].str.startswith("87", na=False)
             ]
-            logger.info(f"发现 {len(target_codes)} 个板块（行业 + 地区 + 概念，不含北交所）")
+            logger.info(
+                f"发现 {len(target_codes)} 个板块（行业 + 地区 + 概念，不含北交所）"
+            )
 
         if concurrent:
             # 使用高并发下载
             logger.info("使用高并发模式下载...")
             self.download_batch_concurrent(
-                codes=target_codes['ts_code'].tolist(),
+                codes=target_codes["ts_code"].tolist(),
                 start_date=start_date,
                 end_date=end_date,
-                name_mapping=target_codes.set_index('ts_code')['name'].to_dict(),
-                max_workers=self.max_workers
+                name_mapping=target_codes.set_index("ts_code")["name"].to_dict(),
+                max_workers=self.max_workers,
             )
         else:
             # 顺序下载
             all_data = []
 
             for i, row in target_codes.iterrows():
-                code = row['ts_code']
-                name = row.get('name', '未知')
-                logger.debug(f"[{i+1}/{len(target_codes)}] 下载 {code} ({name})")
+                code = row["ts_code"]
+                name = row.get("name", "未知")
+                logger.debug(f"[{i + 1}/{len(target_codes)}] 下载 {code} ({name})")
 
                 try:
                     df = self.client.pro.ths_daily(
-                        ts_code=code,
-                        start_date=start_date,
-                        end_date=end_date
+                        ts_code=code, start_date=start_date, end_date=end_date
                     )
 
                     if df is not None and len(df) > 0:
@@ -620,7 +590,9 @@ class HighSpeedDataCollector:
             # 导出合集 CSV（可选）
             if all_data:
                 combined = pd.concat(all_data, ignore_index=True)
-                output_file = output_file or f"ths_all_history_{start_date}_{end_date}.csv"
+                output_file = (
+                    output_file or f"ths_all_history_{start_date}_{end_date}.csv"
+                )
                 output_path = os.path.join(settings.raw_data_dir, output_file)
                 combined.to_csv(output_path, index=False)
 
@@ -646,7 +618,9 @@ def main():
     parser = argparse.ArgumentParser(description="高速数据采集")
     parser.add_argument("--start-date", type=str, default="20200101", help="开始日期")
     parser.add_argument("--end-date", type=str, default="20251231", help="结束日期")
-    parser.add_argument("--mode", choices=["batch", "all"], default="batch", help="下载模式")
+    parser.add_argument(
+        "--mode", choices=["batch", "all"], default="batch", help="下载模式"
+    )
     parser.add_argument("--output", type=str, help="输出文件名（all 模式使用）")
 
     args = parser.parse_args()
@@ -655,15 +629,12 @@ def main():
         logger.error("请设置 TUSHARE_TOKEN")
         return
 
-    collector = HighSpeedDataCollector(
-        token=settings.tushare_token,
-        max_workers=10
-    )
+    collector = HighSpeedDataCollector(token=settings.tushare_token, max_workers=10)
 
     if args.mode == "batch":
         # 获取板块列表
         indices = collector.client.get_ths_indices()
-        codes = indices['ts_code'].tolist()
+        codes = indices["ts_code"].tolist()
 
         collector.download_batch(codes, args.start_date, args.end_date)
 

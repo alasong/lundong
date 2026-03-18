@@ -4,6 +4,7 @@
 SQLite 数据库管理模块
 支持高并发写入、实时去重、增量更新
 """
+
 import os
 import sys
 import sqlite3
@@ -32,19 +33,24 @@ class SQLiteDatabase:
     """
 
     # 表名白名单 - 防止 SQL 注入
-    VALID_TABLES = frozenset([
-        'concept_daily',
-        'concept_info',
-        'industry_info',
-        'collect_task',
-        'stock_daily',
-        'concept_constituent',
-        'stock_factors',
-        'trade_calendar',
-        'concept_daily_archive',
-        'stock_daily_archive',
-        'stock_daily_basic',
-    ])
+    VALID_TABLES = frozenset(
+        [
+            "concept_daily",
+            "concept_info",
+            "industry_info",
+            "collect_task",
+            "stock_daily",
+            "concept_constituent",
+            "stock_factors",
+            "trade_calendar",
+            "concept_daily_archive",
+            "stock_daily_archive",
+            "stock_daily_basic",
+            "strategy_versions",  # 策略版本表
+            "strategy_runs",  # 策略运行日志
+            "strategy_performance",  # 策略绩效汇总
+        ]
+    )
 
     def __init__(self, db_path: str = None, pool_size: int = 5):
         """
@@ -254,18 +260,32 @@ class SQLiteDatabase:
         """)
 
         # 创建索引加速查询
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_trade_date ON concept_daily(trade_date)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trade_date ON concept_daily(trade_date)"
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ts_code ON concept_daily(ts_code)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_concept_date ON concept_daily(ts_code, trade_date)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_concept_date ON concept_daily(ts_code, trade_date)"
+        )
 
         # 个股权威引
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_stock_trade_date ON stock_daily(trade_date)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_stock_ts_code ON stock_daily(ts_code)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_stock_date ON stock_daily(ts_code, trade_date)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_stock_trade_date ON stock_daily(trade_date)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_stock_ts_code ON stock_daily(ts_code)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_stock_date ON stock_daily(ts_code, trade_date)"
+        )
 
         # 成分股索引
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_constituent_concept ON concept_constituent(concept_code)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_constituent_stock ON concept_constituent(stock_code)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_constituent_concept ON concept_constituent(concept_code)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_constituent_stock ON concept_constituent(stock_code)"
+        )
 
         # ===== 优化：覆盖索引（避免回表查询）=====
 
@@ -342,11 +362,86 @@ class SQLiteDatabase:
         """)
 
         # 归档表索引
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_archive_concept_date ON concept_daily_archive(trade_date)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_archive_stock_date ON stock_daily_archive(trade_date)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_archive_concept_date ON concept_daily_archive(trade_date)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_archive_stock_date ON stock_daily_archive(trade_date)"
+        )
+
+        # ===== 策略版本管理表 =====
+        # 策略版本表
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS strategy_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                strategy_name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                params_json TEXT NOT NULL,
+                description TEXT,
+                code_hash TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 0,
+                UNIQUE(strategy_name, version)
+            )
+        """)
+
+        # 策略运行日志表
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS strategy_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                strategy_name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                run_date TEXT NOT NULL,
+                run_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                signals_count INTEGER DEFAULT 0,
+                buy_signals INTEGER DEFAULT 0,
+                portfolio_return REAL,
+                benchmark_return REAL,
+                sharpe REAL,
+                max_drawdown REAL,
+                win_rate REAL,
+                total_return REAL,
+                volatility REAL,
+                metadata TEXT,
+                UNIQUE(strategy_name, run_date, version)
+            )
+        """)
+
+        # 策略绩效汇总表
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS strategy_performance (
+                strategy_name TEXT PRIMARY KEY,
+                current_version TEXT,
+                total_runs INTEGER DEFAULT 0,
+                total_trades INTEGER DEFAULT 0,
+                avg_return REAL DEFAULT 0,
+                avg_sharpe REAL DEFAULT 0,
+                total_return REAL DEFAULT 0,
+                annualized_return REAL DEFAULT 0,
+                max_drawdown REAL DEFAULT 0,
+                win_rate REAL DEFAULT 0,
+                best_day REAL DEFAULT 0,
+                worst_day REAL DEFAULT 0,
+                last_run_date TEXT,
+                last_run_time TIMESTAMP,
+                status TEXT DEFAULT 'active',
+                archived_at TIMESTAMP
+            )
+        """)
+
+        # 创建策略相关索引
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_strategy_versions_name ON strategy_versions(strategy_name)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_strategy_runs_date ON strategy_runs(run_date)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_strategy_runs_name_date ON strategy_runs(strategy_name, run_date)"
+        )
 
         conn.commit()
-        logger.info("数据表创建完成（含覆盖索引、交易日历、归档表）")
+        logger.info("数据表创建完成（含覆盖索引、交易日历、归档表、策略版本管理表）")
 
     def _analyze_tables(self, conn: sqlite3.Connection):
         """更新表统计信息（优化查询计划）"""
@@ -374,7 +469,9 @@ class SQLiteDatabase:
                 self._pool.put(conn)
 
     @staticmethod
-    def _validate_identifier(identifier: str, identifier_type: str = "identifier") -> str:
+    def _validate_identifier(
+        identifier: str, identifier_type: str = "identifier"
+    ) -> str:
         """
         验证标识符（表名/列名）安全性，防止 SQL 注入
 
@@ -394,7 +491,7 @@ class SQLiteDatabase:
             raise ValueError(f"{identifier_type} 不能为空")
 
         # 只允许字母、数字、下划线，且不能以数字开头
-        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', identifier):
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", identifier):
             raise ValueError(
                 f"无效的 {identifier_type}: '{identifier}'。"
                 f"只允许字母、数字、下划线，且不能以数字开头"
@@ -431,7 +528,7 @@ class SQLiteDatabase:
         table: str,
         data: List[Dict[str, Any]],
         replace: bool = True,
-        batch_size: int = 10000
+        batch_size: int = 10000,
     ) -> int:
         """
         批量插入数据（优化：事务批量提交）
@@ -465,8 +562,8 @@ class SQLiteDatabase:
 
         with self.get_connection() as conn:
             try:
-                placeholders = ','.join(['?' for _ in columns])
-                col_names = ','.join(columns)
+                placeholders = ",".join(["?" for _ in columns])
+                col_names = ",".join(columns)
 
                 if replace:
                     sql = f"INSERT OR REPLACE INTO {table} ({col_names}) VALUES ({placeholders})"
@@ -480,7 +577,7 @@ class SQLiteDatabase:
                 conn.execute("BEGIN TRANSACTION")
                 try:
                     for i in range(0, len(rows), batch_size):
-                        batch = rows[i:i + batch_size]
+                        batch = rows[i : i + batch_size]
                         cursor = conn.executemany(sql, batch)
                         total_count += cursor.rowcount
                     conn.commit()
@@ -489,7 +586,9 @@ class SQLiteDatabase:
                     raise e
 
                 mode = "覆盖" if replace else "跳过"
-                logger.debug(f"批量插入 {table}: {total_count} 条记录 ({mode}模式, 批次大小={batch_size})")
+                logger.debug(
+                    f"批量插入 {table}: {total_count} 条记录 ({mode}模式, 批次大小={batch_size})"
+                )
                 return total_count
 
             except Exception as e:
@@ -497,10 +596,7 @@ class SQLiteDatabase:
                 raise
 
     def batch_insert_dataframe(
-        self,
-        table: str,
-        df: pd.DataFrame,
-        replace: bool = True
+        self, table: str, df: pd.DataFrame, replace: bool = True
     ) -> int:
         """
         批量插入 DataFrame 数据
@@ -517,14 +613,10 @@ class SQLiteDatabase:
             return 0
 
         # 转换为 dict 列表
-        data = df.to_dict(orient='records')
+        data = df.to_dict(orient="records")
         return self.batch_insert(table, data, replace)
 
-    def query(
-        self,
-        sql: str,
-        params: tuple = None
-    ) -> List[Tuple]:
+    def query(self, sql: str, params: tuple = None) -> List[Tuple]:
         """
         查询数据
 
@@ -543,11 +635,7 @@ class SQLiteDatabase:
                 cursor.execute(sql)
             return cursor.fetchall()
 
-    def query_to_dataframe(
-        self,
-        sql: str,
-        params: tuple = None
-    ) -> pd.DataFrame:
+    def query_to_dataframe(self, sql: str, params: tuple = None) -> pd.DataFrame:
         """
         查询数据并返回 DataFrame
 
@@ -561,11 +649,7 @@ class SQLiteDatabase:
         with self.get_connection() as conn:
             return pd.read_sql_query(sql, conn, params=params)
 
-    def execute(
-        self,
-        sql: str,
-        params: tuple = None
-    ) -> int:
+    def execute(self, sql: str, params: tuple = None) -> int:
         """
         执行 SQL 语句（UPDATE/DELETE）
 
@@ -586,10 +670,7 @@ class SQLiteDatabase:
             return cursor.rowcount
 
     def get_missing_dates(
-        self,
-        ts_code: str,
-        start_date: str,
-        end_date: str
+        self, ts_code: str, start_date: str, end_date: str
     ) -> List[str]:
         """
         获取缺失的交易日期（优化：使用交易日历表）
@@ -629,6 +710,7 @@ class SQLiteDatabase:
             existing_dates = set(row[0] for row in results)
 
             from datetime import timedelta
+
             start = datetime.strptime(start_date, "%Y%m%d")
             end = datetime.strptime(end_date, "%Y%m%d")
 
@@ -644,11 +726,7 @@ class SQLiteDatabase:
 
             return all_dates
 
-    def has_data(
-        self,
-        ts_code: str,
-        trade_date: str
-    ) -> bool:
+    def has_data(self, ts_code: str, trade_date: str) -> bool:
         """
         检查数据是否存在
 
@@ -692,10 +770,7 @@ class SQLiteDatabase:
         return None
 
     def get_data_range(
-        self,
-        ts_code: str,
-        start_date: str,
-        end_date: str
+        self, ts_code: str, start_date: str, end_date: str
     ) -> pd.DataFrame:
         """
         获取指定范围的数据
@@ -740,19 +815,16 @@ class SQLiteDatabase:
 
     def save_concept_info(self, info: Dict[str, Any]):
         """保存板块信息"""
-        info['updated_at'] = datetime.now().strftime("%Y%m%d")
-        self.batch_insert('concept_info', [info], replace=True)
+        info["updated_at"] = datetime.now().strftime("%Y%m%d")
+        self.batch_insert("concept_info", [info], replace=True)
 
     def save_industry_info(self, info: Dict[str, Any]):
         """保存行业信息"""
-        info['updated_at'] = datetime.now().strftime("%Y%m%d")
-        self.batch_insert('industry_info', [info], replace=True)
+        info["updated_at"] = datetime.now().strftime("%Y%m%d")
+        self.batch_insert("industry_info", [info], replace=True)
 
     def save_concept_daily(
-        self,
-        ts_code: str,
-        data: Dict[str, Any],
-        replace: bool = True
+        self, ts_code: str, data: Dict[str, Any], replace: bool = True
     ):
         """
         保存板块日线数据
@@ -762,14 +834,10 @@ class SQLiteDatabase:
             data: 数据字典
             replace: 是否覆盖已有数据
         """
-        data['ts_code'] = ts_code
-        self.batch_insert('concept_daily', [data], replace)
+        data["ts_code"] = ts_code
+        self.batch_insert("concept_daily", [data], replace)
 
-    def save_concept_daily_batch(
-        self,
-        df: pd.DataFrame,
-        replace: bool = True
-    ):
+    def save_concept_daily_batch(self, df: pd.DataFrame, replace: bool = True):
         """
         批量保存板块日线数据
 
@@ -777,14 +845,9 @@ class SQLiteDatabase:
             df: DataFrame (必须包含 ts_code, trade_date 等列)
             replace: 是否覆盖已有数据
         """
-        self.batch_insert_dataframe('concept_daily', df, replace)
+        self.batch_insert_dataframe("concept_daily", df, replace)
 
-    def create_collect_task(
-        self,
-        ts_code: str,
-        start_date: str,
-        end_date: str
-    ) -> int:
+    def create_collect_task(self, ts_code: str, start_date: str, end_date: str) -> int:
         """
         创建采集任务
 
@@ -807,12 +870,7 @@ class SQLiteDatabase:
             conn.commit()
             return cursor.lastrowid
 
-    def update_task_status(
-        self,
-        task_id: int,
-        status: str,
-        error_message: str = None
-    ):
+    def update_task_status(self, task_id: int, status: str, error_message: str = None):
         """
         更新任务状态
 
@@ -856,21 +914,11 @@ class SQLiteDatabase:
         """
         results = self.query(sql, (limit,))
         return [
-            {
-                'id': r[0],
-                'ts_code': r[1],
-                'start_date': r[2],
-                'end_date': r[3]
-            }
+            {"id": r[0], "ts_code": r[1], "start_date": r[2], "end_date": r[3]}
             for r in results
         ]
 
-    def export_to_csv(
-        self,
-        query: str,
-        params: tuple,
-        output_path: str
-    ):
+    def export_to_csv(self, query: str, params: tuple, output_path: str):
         """
         将查询结果导出为 CSV（兼容下游分析流程）
 
@@ -890,20 +938,20 @@ class SQLiteDatabase:
         # 总记录数
         sql = "SELECT COUNT(*) FROM concept_daily"
         result = self.query(sql)
-        stats['total_records'] = result[0][0] if result else 0
+        stats["total_records"] = result[0][0] if result else 0
 
         # 板块数量
         sql = "SELECT COUNT(DISTINCT ts_code) FROM concept_daily"
         result = self.query(sql)
-        stats['concept_count'] = result[0][0] if result else 0
+        stats["concept_count"] = result[0][0] if result else 0
 
         # 日期范围
         sql = "SELECT MIN(trade_date), MAX(trade_date) FROM concept_daily"
         result = self.query(sql)
         if result and result[0][0]:
-            stats['date_range'] = (str(result[0][0]), str(result[0][1]))
+            stats["date_range"] = (str(result[0][0]), str(result[0][1]))
         else:
-            stats['date_range'] = (None, None)
+            stats["date_range"] = (None, None)
 
         # 检查重复
         sql = """
@@ -911,7 +959,7 @@ class SQLiteDatabase:
             FROM concept_daily
         """
         result = self.query(sql)
-        stats['duplicates'] = result[0][0] if result else 0
+        stats["duplicates"] = result[0][0] if result else 0
 
         return stats
 
@@ -937,10 +985,7 @@ class SQLiteDatabase:
     # ==================== 个股数据操作方法 ====================
 
     def save_stock_daily(
-        self,
-        ts_code: str,
-        data: Dict[str, Any],
-        replace: bool = True
+        self, ts_code: str, data: Dict[str, Any], replace: bool = True
     ):
         """
         保存个股日线数据
@@ -950,14 +995,10 @@ class SQLiteDatabase:
             data: 数据字典
             replace: 是否覆盖已有数据
         """
-        data['ts_code'] = ts_code
-        self.batch_insert('stock_daily', [data], replace)
+        data["ts_code"] = ts_code
+        self.batch_insert("stock_daily", [data], replace)
 
-    def save_stock_daily_batch(
-        self,
-        df: pd.DataFrame,
-        replace: bool = True
-    ):
+    def save_stock_daily_batch(self, df: pd.DataFrame, replace: bool = True):
         """
         批量保存个股日线数据
 
@@ -965,13 +1006,10 @@ class SQLiteDatabase:
             df: DataFrame (必须包含 ts_code, trade_date 等列)
             replace: 是否覆盖已有数据
         """
-        self.batch_insert_dataframe('stock_daily', df, replace)
+        self.batch_insert_dataframe("stock_daily", df, replace)
 
     def get_stock_data(
-        self,
-        ts_code: str,
-        start_date: str,
-        end_date: str
+        self, ts_code: str, start_date: str, end_date: str
     ) -> pd.DataFrame:
         """
         获取个股数据
@@ -1015,10 +1053,7 @@ class SQLiteDatabase:
             return self.query_to_dataframe(sql)
 
     def get_stock_missing_dates(
-        self,
-        ts_code: str,
-        start_date: str,
-        end_date: str
+        self, ts_code: str, start_date: str, end_date: str
     ) -> List[str]:
         """
         获取个股缺失的交易日期（优化：使用交易日历表）
@@ -1057,6 +1092,7 @@ class SQLiteDatabase:
             existing_dates = set(row[0] for row in results)
 
             from datetime import timedelta
+
             start = datetime.strptime(start_date, "%Y%m%d")
             end = datetime.strptime(end_date, "%Y%m%d")
 
@@ -1074,9 +1110,7 @@ class SQLiteDatabase:
     # ==================== 成分股操作方法 ====================
 
     def save_concept_constituents(
-        self,
-        concept_code: str,
-        constituents: List[Dict[str, Any]]
+        self, concept_code: str, constituents: List[Dict[str, Any]]
     ):
         """
         保存板块成分股
@@ -1089,16 +1123,16 @@ class SQLiteDatabase:
         data = []
         for stock in constituents:
             record = {
-                'concept_code': concept_code,
-                'stock_code': stock.get('stock_code'),
-                'stock_name': stock.get('stock_name', ''),
-                'weight': stock.get('weight'),
-                'is_core': stock.get('is_core', 1),
-                'listed_date': stock.get('listed_date'),
-                'updated_at': updated_at
+                "concept_code": concept_code,
+                "stock_code": stock.get("stock_code"),
+                "stock_name": stock.get("stock_name", ""),
+                "weight": stock.get("weight"),
+                "is_core": stock.get("is_core", 1),
+                "listed_date": stock.get("listed_date"),
+                "updated_at": updated_at,
             }
             data.append(record)
-        self.batch_insert('concept_constituent', data, replace=True)
+        self.batch_insert("concept_constituent", data, replace=True)
 
     def get_concept_constituents(self, concept_code: str) -> List[Dict[str, Any]]:
         """
@@ -1119,11 +1153,11 @@ class SQLiteDatabase:
         results = self.query(sql, (concept_code,))
         return [
             {
-                'stock_code': r[0],
-                'stock_name': r[1],
-                'weight': r[2],
-                'is_core': bool(r[3]) if r[3] is not None else True,
-                'listed_date': r[4]
+                "stock_code": r[0],
+                "stock_name": r[1],
+                "weight": r[2],
+                "is_core": bool(r[3]) if r[3] is not None else True,
+                "listed_date": r[4],
             }
             for r in results
         ]
@@ -1141,18 +1175,10 @@ class SQLiteDatabase:
             ORDER BY stock_code
         """
         results = self.query(sql)
-        return [
-            {
-                'stock_code': r[0],
-                'stock_name': r[1]
-            }
-            for r in results
-        ]
+        return [{"stock_code": r[0], "stock_name": r[1]} for r in results]
 
     def get_constituent_stocks(
-        self,
-        concept_codes: List[str],
-        limit_per_concept: int = None
+        self, concept_codes: List[str], limit_per_concept: int = None
     ) -> pd.DataFrame:
         """
         获取多个板块的成分股
@@ -1167,7 +1193,7 @@ class SQLiteDatabase:
         if not concept_codes:
             return pd.DataFrame()
 
-        placeholders = ','.join(['?' for _ in concept_codes])
+        placeholders = ",".join(["?" for _ in concept_codes])
         if limit_per_concept:
             sql = f"""
                 SELECT concept_code, stock_code, stock_name, weight, is_core
@@ -1192,11 +1218,7 @@ class SQLiteDatabase:
 
     # ==================== 个股因子操作方法 ====================
 
-    def save_stock_factors(
-        self,
-        ts_code: str,
-        factors: Dict[str, Any]
-    ):
+    def save_stock_factors(self, ts_code: str, factors: Dict[str, Any]):
         """
         保存个股因子
 
@@ -1204,13 +1226,11 @@ class SQLiteDatabase:
             ts_code: 个股代码
             factors: 因子数据字典
         """
-        factors['ts_code'] = ts_code
-        self.batch_insert('stock_factors', [factors], replace=True)
+        factors["ts_code"] = ts_code
+        self.batch_insert("stock_factors", [factors], replace=True)
 
     def get_stock_factors(
-        self,
-        ts_code: str,
-        trade_date: str = None
+        self, ts_code: str, trade_date: str = None
     ) -> Optional[Dict[str, Any]]:
         """
         获取个股因子
@@ -1238,8 +1258,19 @@ class SQLiteDatabase:
             results = self.query(sql, (ts_code,))
 
         if results:
-            cols = ['ts_code', 'trade_date', 'market_cap', 'pe_ttm', 'pb_ttm', 'ps_ttm',
-                    'momentum_20d', 'momentum_60d', 'volatility_20d', 'avg_turnover_20d', 'avg_amount_20d']
+            cols = [
+                "ts_code",
+                "trade_date",
+                "market_cap",
+                "pe_ttm",
+                "pb_ttm",
+                "ps_ttm",
+                "momentum_20d",
+                "momentum_60d",
+                "volatility_20d",
+                "avg_turnover_20d",
+                "avg_amount_20d",
+            ]
             return dict(zip(cols, results[0]))
         return None
 
@@ -1252,20 +1283,20 @@ class SQLiteDatabase:
         # 总记录数
         sql = "SELECT COUNT(*) FROM stock_daily"
         result = self.query(sql)
-        stats['total_records'] = result[0][0] if result else 0
+        stats["total_records"] = result[0][0] if result else 0
 
         # 个股数量
         sql = "SELECT COUNT(DISTINCT ts_code) FROM stock_daily"
         result = self.query(sql)
-        stats['stock_count'] = result[0][0] if result else 0
+        stats["stock_count"] = result[0][0] if result else 0
 
         # 日期范围
         sql = "SELECT MIN(trade_date), MAX(trade_date) FROM stock_daily"
         result = self.query(sql)
         if result and result[0][0]:
-            stats['date_range'] = (str(result[0][0]), str(result[0][1]))
+            stats["date_range"] = (str(result[0][0]), str(result[0][1]))
         else:
-            stats['date_range'] = (None, None)
+            stats["date_range"] = (None, None)
 
         return stats
 
@@ -1293,9 +1324,7 @@ class SQLiteDatabase:
 
             # 获取交易日历
             cal = pro.trade_cal(
-                exchange='SSE',
-                start_date=start_date,
-                end_date=end_date
+                exchange="SSE", start_date=start_date, end_date=end_date
             )
 
             if cal.empty:
@@ -1305,15 +1334,17 @@ class SQLiteDatabase:
             # 准备数据
             records = []
             for _, row in cal.iterrows():
-                records.append({
-                    'trade_date': row['cal_date'],
-                    'is_open': row.get('is_open', 1),
-                    'pre_trade_date': row.get('pretrade_date'),
-                    'next_trade_date': None  # 后续计算
-                })
+                records.append(
+                    {
+                        "trade_date": row["cal_date"],
+                        "is_open": row.get("is_open", 1),
+                        "pre_trade_date": row.get("pretrade_date"),
+                        "next_trade_date": None,  # 后续计算
+                    }
+                )
 
             # 批量插入
-            self.batch_insert('trade_calendar', records, replace=True)
+            self.batch_insert("trade_calendar", records, replace=True)
 
             # 更新 next_trade_date
             self._update_trade_calendar_links()
@@ -1338,9 +1369,7 @@ class SQLiteDatabase:
         self.execute(sql)
 
     def get_trade_dates(
-        self,
-        start_date: str = None,
-        end_date: str = None
+        self, start_date: str = None, end_date: str = None
     ) -> List[str]:
         """
         获取交易日列表
@@ -1412,9 +1441,7 @@ class SQLiteDatabase:
     # ==================== 数据归档操作方法 ====================
 
     def archive_old_data(
-        self,
-        before_date: str,
-        tables: List[str] = None
+        self, before_date: str, tables: List[str] = None
     ) -> Dict[str, int]:
         """
         归档历史数据
@@ -1427,7 +1454,7 @@ class SQLiteDatabase:
             各表归档记录数
         """
         if tables is None:
-            tables = ['concept_daily', 'stock_daily']
+            tables = ["concept_daily", "stock_daily"]
 
         results = {}
         logger.info(f"开始归档 {before_date} 之前的数据...")
@@ -1455,7 +1482,7 @@ class SQLiteDatabase:
             delete_sql = f"DELETE FROM {table} WHERE trade_date < ?"
             deleted_count = self.execute(delete_sql, (before_date,))
 
-            results[table] = {'archived': archived_count, 'deleted': deleted_count}
+            results[table] = {"archived": archived_count, "deleted": deleted_count}
             logger.info(f"{table}: 归档 {archived_count} 条, 删除 {deleted_count} 条")
 
         # 清理空间
@@ -1464,10 +1491,7 @@ class SQLiteDatabase:
         return results
 
     def restore_archived_data(
-        self,
-        start_date: str,
-        end_date: str,
-        tables: List[str] = None
+        self, start_date: str, end_date: str, tables: List[str] = None
     ) -> Dict[str, int]:
         """
         从归档表恢复数据
@@ -1481,7 +1505,7 @@ class SQLiteDatabase:
             各表恢复记录数
         """
         if tables is None:
-            tables = ['concept_daily', 'stock_daily']
+            tables = ["concept_daily", "stock_daily"]
 
         results = {}
 
@@ -1511,17 +1535,23 @@ class SQLiteDatabase:
         # 概念板块归档统计
         sql = "SELECT COUNT(*), MIN(trade_date), MAX(trade_date) FROM concept_daily_archive"
         result = self.query(sql)
-        stats['concept_archive'] = {
-            'count': result[0][0] if result else 0,
-            'date_range': (result[0][1], result[0][2]) if result and result[0][1] else (None, None)
+        stats["concept_archive"] = {
+            "count": result[0][0] if result else 0,
+            "date_range": (result[0][1], result[0][2])
+            if result and result[0][1]
+            else (None, None),
         }
 
         # 个股归档统计
-        sql = "SELECT COUNT(*), MIN(trade_date), MAX(trade_date) FROM stock_daily_archive"
+        sql = (
+            "SELECT COUNT(*), MIN(trade_date), MAX(trade_date) FROM stock_daily_archive"
+        )
         result = self.query(sql)
-        stats['stock_archive'] = {
-            'count': result[0][0] if result else 0,
-            'date_range': (result[0][1], result[0][2]) if result and result[0][1] else (None, None)
+        stats["stock_archive"] = {
+            "count": result[0][0] if result else 0,
+            "date_range": (result[0][1], result[0][2])
+            if result and result[0][1]
+            else (None, None),
         }
 
         return stats
@@ -1534,43 +1564,49 @@ class SQLiteDatabase:
 
         # 页面统计
         result = self.query("PRAGMA page_count")
-        stats['page_count'] = result[0][0] if result else 0
+        stats["page_count"] = result[0][0] if result else 0
 
         result = self.query("PRAGMA page_size")
-        stats['page_size'] = result[0][0] if result else 4096
+        stats["page_size"] = result[0][0] if result else 4096
 
-        stats['db_size_mb'] = round(
-            stats['page_count'] * stats['page_size'] / 1024 / 1024, 2
+        stats["db_size_mb"] = round(
+            stats["page_count"] * stats["page_size"] / 1024 / 1024, 2
         )
 
         # WAL 状态
         try:
             result = self.query("PRAGMA wal_checkpoint(PASSIVE)")
-            stats['wal_busy'] = result[0][0] if result else 0
-            stats['wal_log'] = result[0][1] if result else 0
-            stats['wal_checkpointed'] = result[0][2] if result else 0
+            stats["wal_busy"] = result[0][0] if result else 0
+            stats["wal_log"] = result[0][1] if result else 0
+            stats["wal_checkpointed"] = result[0][2] if result else 0
         except:
-            stats['wal_status'] = 'unavailable'
+            stats["wal_status"] = "unavailable"
 
         # 缓存状态
         try:
             result = self.query("PRAGMA cache_size")
-            stats['cache_size'] = result[0][0] if result else 0
+            stats["cache_size"] = result[0][0] if result else 0
         except:
             pass
 
         # 主表记录数
-        stats['concept_daily_count'] = self.query("SELECT COUNT(*) FROM concept_daily")[0][0]
-        stats['stock_daily_count'] = self.query("SELECT COUNT(*) FROM stock_daily")[0][0]
+        stats["concept_daily_count"] = self.query("SELECT COUNT(*) FROM concept_daily")[
+            0
+        ][0]
+        stats["stock_daily_count"] = self.query("SELECT COUNT(*) FROM stock_daily")[0][
+            0
+        ]
 
         # 数据日期范围
-        result = self.query("SELECT MIN(trade_date), MAX(trade_date) FROM concept_daily")
+        result = self.query(
+            "SELECT MIN(trade_date), MAX(trade_date) FROM concept_daily"
+        )
         if result and result[0][0]:
-            stats['concept_date_range'] = (result[0][0], result[0][1])
+            stats["concept_date_range"] = (result[0][0], result[0][1])
 
         result = self.query("SELECT MIN(trade_date), MAX(trade_date) FROM stock_daily")
         if result and result[0][0]:
-            stats['stock_date_range'] = (result[0][0], result[0][1])
+            stats["stock_date_range"] = (result[0][0], result[0][1])
 
         return stats
 
@@ -1596,6 +1632,135 @@ class SQLiteDatabase:
         self.vacuum()
 
         logger.info("数据库优化完成")
+
+    # ==================== 数据迁移方法 ====================
+
+    def migrate_listed_date_constraint(self):
+        """
+        迁移 listed_date 列的 CHECK 约束
+        移除任何现有的 CHECK 约束，允许 NULL 值
+
+        SQLite 不支持直接 DROP CHECK 约束，
+        需要通过重建表来移除约束
+        """
+        logger.info("开始迁移 listed_date CHECK 约束...")
+
+        with self.get_connection() as conn:
+            try:
+                # 检查当前表结构
+                cursor = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='concept_constituent'"
+                )
+                result = cursor.fetchone()
+
+                if result and "CHECK" in result[0]:
+                    logger.info("检测到 CHECK 约束，开始迁移...")
+
+                    # 重命名原表
+                    conn.execute(
+                        "ALTER TABLE concept_constituent RENAME TO concept_constituent_old"
+                    )
+
+                    # 创建新表（无 CHECK 约束）
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS concept_constituent (
+                            concept_code TEXT NOT NULL,
+                            stock_code TEXT NOT NULL,
+                            stock_name TEXT,
+                            weight REAL,
+                            is_core INTEGER DEFAULT 1,
+                            listed_date TEXT,
+                            updated_at TEXT,
+                            PRIMARY KEY (concept_code, stock_code)
+                        )
+                    """)
+
+                    # 迁移数据
+                    conn.execute("""
+                        INSERT INTO concept_constituent 
+                        SELECT concept_code, stock_code, stock_name, weight, 
+                               is_core, listed_date, updated_at
+                        FROM concept_constituent_old
+                    """)
+
+                    # 删除旧表
+                    conn.execute("DROP TABLE concept_constituent_old")
+
+                    # 重建索引
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_constituent_weight ON concept_constituent(concept_code, weight DESC)"
+                    )
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_constituent_stock ON concept_constituent(stock_code)"
+                    )
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_constituent_concept ON concept_constituent(concept_code)"
+                    )
+
+                    conn.commit()
+                    logger.info("listed_date CHECK 约束迁移完成")
+                else:
+                    logger.info("无需迁移：未检测到 CHECK 约束")
+
+            except Exception as e:
+                logger.error(f"listed_date 迁移失败: {e}")
+                raise
+
+    def verify_listed_date_schema(self) -> Dict[str, Any]:
+        """
+        验证 listed_date 列的 schema
+
+        Returns:
+            验证结果字典
+        """
+        result = {
+            "valid": True,
+            "issues": [],
+            "listed_date_nullable": True,
+            "has_check_constraint": False,
+        }
+
+        with self.get_connection() as conn:
+            try:
+                # 检查表结构
+                cursor = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='concept_constituent'"
+                )
+                table_sql = cursor.fetchone()[0]
+
+                # 检查是否有 CHECK 约束
+                if "CHECK" in table_sql.upper():
+                    result["has_check_constraint"] = True
+                    result["issues"].append("检测到 CHECK 约束")
+                    result["valid"] = False
+
+                # 检查 listed_date 是否允许 NULL
+                cursor = conn.execute("PRAGMA table_info(concept_constituent)")
+                columns = cursor.fetchall()
+
+                listed_date_info = None
+                for col in columns:
+                    if col[1] == "listed_date":
+                        listed_date_info = col
+                        break
+
+                if listed_date_info:
+                    # SQLite 中 notnull=1 表示 NOT NULL，=0 表示允许 NULL
+                    result["listed_date_nullable"] = listed_date_info[3] == 0
+                    if not result["listed_date_nullable"]:
+                        result["issues"].append("listed_date 不允许 NULL 值")
+                        result["valid"] = False
+                else:
+                    result["issues"].append("listed_date 列不存在")
+                    result["valid"] = False
+
+            except Exception as e:
+                result["valid"] = False
+                result["issues"].append(f"验证失败: {e}")
+
+        return result
+
+
 _db_instance: Optional[SQLiteDatabase] = None
 
 

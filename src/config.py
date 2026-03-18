@@ -1,6 +1,7 @@
 """
 配置模块
 """
+
 from pydantic_settings import BaseSettings
 from typing import Optional
 import os
@@ -11,6 +12,7 @@ class Settings(BaseSettings):
 
     # Tushare
     tushare_token: str = ""
+    tushare_premium_token: str = ""
 
     # 通义千问
     dashscope_api_key: str = ""
@@ -31,18 +33,18 @@ class Settings(BaseSettings):
 
     # 热点识别权重
     hotspot_weights: dict = {
-        "price_strength": 0.30,      # 涨幅强度
-        "money_strength": 0.25,      # 资金强度
+        "price_strength": 0.30,  # 涨幅强度
+        "money_strength": 0.25,  # 资金强度
         "sentiment_strength": 0.20,  # 情绪强度
-        "persistence": 0.15,         # 持续性
-        "market_position": 0.10,     # 市场地位
+        "persistence": 0.15,  # 持续性
+        "market_position": 0.10,  # 市场地位
     }
 
     # 预测周期
     prediction_horizons: dict = {
-        "short_term": 1,    # 日内
-        "mid_term": 5,      # 周级
-        "long_term": 20,    # 月级
+        "short_term": 1,  # 日内
+        "mid_term": 5,  # 周级
+        "long_term": 20,  # 月级
     }
 
     # 策略配置
@@ -52,28 +54,33 @@ class Settings(BaseSettings):
         "take_profit_default": 0.15,
         "stop_loss_conservative": -0.05,
         "stop_loss_aggressive": -0.12,
-
         # 仓位管理
         "position_bull": 0.90,
         "position_bear": 0.30,
         "position_sideways": 0.60,
-
         # 轮动策略
-        "score_decay_threshold": 0.20,      # 热点评分衰减阈值
-        "prediction_diff_threshold": 0.15,   # 预测差异阈值
-        "volume_surge_threshold": 2.0,       # 成交量放大倍数
+        "score_decay_threshold": 0.20,  # 热点评分衰减阈值
+        "prediction_diff_threshold": 0.15,  # 预测差异阈值
+        "volume_surge_threshold": 2.0,  # 成交量放大倍数
         "rsi_overbought": 70,
         "rsi_oversold": 30,
-
         # 事件驱动
         "earnings_weight_factor": 1.2,
         "policy_weight_factor": 1.3,
         "signal_validity_days": 10,
-
         # 风险控制
         "trailing_stop_enabled": True,
         "profit_trailing_threshold": 0.05,
         "high_vol_threshold": 0.30,
+    }
+
+    # 数据采集配置
+    data_collection: dict = {
+        "max_workers": 5,  # 并发线程数
+        "api_limit": 450,  # API 每分钟请求限制（预留缓冲）
+        "target_days": 250,  # 数据完整性目标天数
+        "retry_times": 3,  # 失败重试次数
+        "retry_wait": 0.5,  # 重试等待时间（秒）
     }
 
     class Config:
@@ -83,6 +90,27 @@ class Settings(BaseSettings):
 
 # 全局配置实例
 settings = Settings()
+
+
+def get_tushare_token() -> str:
+    if settings.tushare_premium_token:
+        return settings.tushare_premium_token
+    return settings.tushare_token
+
+
+def validate_tushare_token(token: str) -> bool:
+    if not token or not isinstance(token, str):
+        return False
+
+    token = token.strip()
+    if len(token) != 40:
+        return False
+
+    try:
+        int(token, 16)
+        return True
+    except ValueError:
+        return False
 
 
 def ensure_directories():

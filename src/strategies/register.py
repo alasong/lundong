@@ -54,3 +54,21 @@ StrategyFactory.register_strategy("dividend", DividendStrategy)
 # from strategies.statistical_arbitrage import StatisticalArbitrageStrategy
 # StrategyFactory.register_strategy("multi_factor", MultiFactorStrategy)
 # StrategyFactory.register_strategy("statistical_arbitrage", StatisticalArbitrageStrategy)
+
+# 打板策略
+from .enhanced_dragon_head import EnhancedDragonHeadStrategy
+from .first_limit import FirstLimitStrategy
+from .one_to_two import OneToTwoStrategy
+
+StrategyFactory.register_strategy("enhanced_dragon_head", EnhancedDragonHeadStrategy)
+StrategyFactory.register_strategy("first_limit", FirstLimitStrategy)
+StrategyFactory.register_strategy("one_to_two", OneToTwoStrategy)
+
+# 自动加载插件
+try:
+    from .plugin_loader import PluginLoader
+
+    _plugin_loader = PluginLoader()
+    _plugin_loader.load_all_plugins()
+except ImportError:
+    pass  # 插件加载器不可用时静默处理
