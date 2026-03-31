@@ -9,9 +9,18 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 from loguru import logger
 
+import sys
+import os
+
+sys.path.insert(
+    0,
+    os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    ),
+)
+
 from ...base_strategy import BaseStrategy
-from ...data.database import get_database
-from ...data.stock_data import StockData
+from data.database import get_database
 
 
 class DabanV1Strategy(BaseStrategy):
@@ -19,10 +28,9 @@ class DabanV1Strategy(BaseStrategy):
     打板策略 V1 - 首板+一进二+龙头股组合策略
     """
 
-    def __init__(self, strategy_config: Dict = None):
+    def __init__(self, strategy_config: Optional[Dict] = None):
         super().__init__("daban_v1", strategy_config)
         self.db = get_database()
-        self.stock_data = StockData(self.db)
 
         # 默认参数配置
         self.default_config = {
@@ -59,7 +67,7 @@ class DabanV1Strategy(BaseStrategy):
                 result[key] = value
         return result
 
-    def execute(self, date: str = None) -> Dict:
+    def execute(self, date: Optional[str] = None) -> Dict:
         """
         执行打板策略
         :param date: 日期字符串，格式YYYYMMDD

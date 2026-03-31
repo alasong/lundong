@@ -500,9 +500,9 @@ class PortfolioOptimizer:
 
         # 导入策略组件
         try:
-            from strategy.position_manager import PositionManager
-            from strategy.enhanced_risk_manager import EnhancedRiskManager
-            from strategy.event_driver import EventDriver
+            from strategies.position_manager import PositionManager
+            from strategies.enhanced_risk_manager import EnhancedRiskManager
+            from strategies.event_driver import EventDriver
         except ImportError:
             logger.warning("策略模块导入失败，使用基础优化")
             return self.optimize(stock_predictions, concept_predictions, **kwargs)

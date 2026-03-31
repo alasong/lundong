@@ -39,11 +39,13 @@ class DabanFeatureEngine:
         seal_amount: float,
         circulating_cap: float,
         limit_up_time: Optional[str] = None,
+        turnover_amount: float = 0.0,
+        market_phase: str = "normal",
     ) -> float:
         """
-        计算封单强度
+        计算封单强度（增强版）
 
-        封单强度 = 封单量 / 流通股本
+        封单强度 = 封单量 / 流通股本 + 封单金额 / 成交额 + 市场环境因子
         封单金额超过5000万的涨停板成功率更高
 
         Args:
@@ -52,6 +54,8 @@ class DabanFeatureEngine:
             seal_amount: 封单金额（万元）
             circulating_cap: 流通市值（万元）
             limit_up_time: 封板时间（HH:MM 格式）
+            turnover_amount: 当日成交额（万元）
+            market_phase: 市场阶段（启动期/高潮期/衰退期/冰点期）
 
         Returns:
             封单强度评分 (0-100)
@@ -88,8 +92,35 @@ class DabanFeatureEngine:
         # 封单比例评分
         ratio_score = min(100, seal_ratio * 1000)  # 10% 封单比例为满分
 
-        # 综合评分
-        final_score = (amount_score * 0.5 + ratio_score * 0.5) * time_factor
+        # 封单/成交额比率评分（流动性因子）
+        liquidity_score = 50.0
+        if turnover_amount > 0:
+            seal_turnover_ratio = seal_amount / turnover_amount
+            liquidity_score = min(
+                100, seal_turnover_ratio * 200
+            )  # 50% 封单/成交额为满分
+
+        # 市场环境因子
+        market_factor = 1.0
+        market_factors = {
+            "启动期": 1.1,
+            "高潮期": 1.0,
+            "衰退期": 0.8,
+            "冰点期": 0.6,
+        }
+        market_factor = market_factors.get(market_phase, 1.0)
+
+        # 综合评分（增强版）
+        final_score = (
+            (
+                amount_score * 0.4
+                + ratio_score * 0.3
+                + liquidity_score * 0.2
+                + 50.0 * 0.1  # 基础分
+            )
+            * time_factor
+            * market_factor
+        )
 
         return min(100, max(0, final_score))
 
@@ -100,9 +131,13 @@ class DabanFeatureEngine:
         seal_success_rate: float,
         max_consecutive_boards: int,
         market_return: float = 0.0,
+        new_highs_count: int = 0,
+        new_lows_count: int = 0,
+        volume_ratio: float = 1.0,
+        advance_decline_ratio: float = 1.0,
     ) -> Dict:
         """
-        计算情绪周期
+        计算情绪周期（增强版）
 
         Args:
             limit_up_count: 涨停家数
@@ -110,6 +145,10 @@ class DabanFeatureEngine:
             seal_success_rate: 封板成功率
             max_consecutive_boards: 最高连板数
             market_return: 大盘涨幅
+            new_highs_count: 创新高家数
+            new_lows_count: 创新低家数
+            volume_ratio: 成交量比率（vs 20日均量）
+            advance_decline_ratio: 上涨/下跌家数比
 
         Returns:
             {
@@ -122,14 +161,32 @@ class DabanFeatureEngine:
         up_down_ratio = limit_up_count / max(1, limit_down_count)
         heat_score = min(100, limit_up_count / 100 * 100)  # 100家涨停为满分
 
-        # 判断周期阶段
-        if limit_up_count >= 80 and seal_success_rate >= 0.7:
+        # 新高新低比率
+        new_high_low_ratio = new_highs_count / max(1, new_lows_count)
+
+        # 综合情绪指标
+        composite_sentiment = (
+            seal_success_rate * 0.4
+            + min(1.0, limit_up_count / 100) * 0.3
+            + min(1.0, new_highs_count / 200) * 0.2
+            + min(1.0, advance_decline_ratio) * 0.1
+        )
+
+        # 判断周期阶段（增强版逻辑）
+        if limit_up_count >= 80 and seal_success_rate >= 0.7 and new_highs_count >= 50:
             phase = "高潮期"
-        elif limit_up_count >= 40 and seal_success_rate >= 0.5:
+        elif (
+            limit_up_count >= 40 and seal_success_rate >= 0.5 and new_highs_count >= 20
+        ):
             phase = "启动期"
-        elif limit_up_count < 20 or seal_success_rate < 0.3:
+        elif limit_up_count < 20 or seal_success_rate < 0.3 or new_highs_count < 10:
             phase = "冰点期"
-        elif seal_success_rate < 0.5 or up_down_ratio < 1:
+        elif (
+            seal_success_rate < 0.5
+            or up_down_ratio < 1
+            or new_high_low_ratio < 0.5
+            or advance_decline_ratio < 0.8
+        ):
             phase = "衰退期"
         else:
             phase = "启动期"
@@ -156,6 +213,18 @@ class DabanFeatureEngine:
         elif market_return < -0.02:
             score_adjustment -= 10
 
+        # 成交量因子
+        if volume_ratio > 1.2:
+            score_adjustment += 3
+        elif volume_ratio < 0.8:
+            score_adjustment -= 3
+
+        # 新高新低因子
+        if new_highs_count > 50:
+            score_adjustment += 5
+        elif new_lows_count > 50:
+            score_adjustment -= 5
+
         final_score = min(100, max(0, base_score + score_adjustment))
 
         return {
@@ -168,6 +237,11 @@ class DabanFeatureEngine:
                 "seal_success_rate": round(seal_success_rate, 2),
                 "max_consecutive_boards": max_consecutive_boards,
                 "heat_score": round(heat_score, 1),
+                "new_highs_count": new_highs_count,
+                "new_lows_count": new_lows_count,
+                "volume_ratio": round(volume_ratio, 2),
+                "advance_decline_ratio": round(advance_decline_ratio, 2),
+                "composite_sentiment": round(composite_sentiment, 3),
             },
         }
 
@@ -177,15 +251,21 @@ class DabanFeatureEngine:
         concept_codes: List[str],
         concept_data: pd.DataFrame,
         limit_up_stocks_in_sector: int = 0,
+        sector_correlation: float = 0.0,
+        market_sentiment_score: float = 50.0,
+        sector_momentum: float = 0.0,
     ) -> float:
         """
-        计算板块联动效应评分
+        计算板块联动效应评分（增强版）
 
         Args:
             ts_code: 个股代码
             concept_codes: 所属板块代码列表
             concept_data: 板块行情数据 DataFrame
             limit_up_stocks_in_sector: 板块内涨停家数
+            sector_correlation: 板块相关性（与市场热点的相关性）
+            market_sentiment_score: 市场情绪评分 (0-100)
+            sector_momentum: 板块动量（5日累计涨幅）
 
         Returns:
             板块联动评分 (0-100)
@@ -213,9 +293,25 @@ class DabanFeatureEngine:
             amount = row.get("amount", 0)
             amount_score = min(100, amount / 1e8 * 10) if amount > 0 else 0
 
-            # 综合板块评分
-            sector_score = pct_score * 0.5 + limit_score * 0.3 + amount_score * 0.2
-            scores.append(sector_score)
+            # 板块相关性评分（与市场热点的关联度）
+            correlation_score = min(100, max(0, sector_correlation * 100))
+
+            # 板块动量评分
+            momentum_score = min(100, max(0, 50 + sector_momentum * 10))
+
+            # 市场情绪加成
+            sentiment_bonus = market_sentiment_score / 100 * 10
+
+            # 综合板块评分（增强版）
+            sector_score = (
+                pct_score * 0.3
+                + limit_score * 0.25
+                + amount_score * 0.15
+                + correlation_score * 0.2
+                + momentum_score * 0.1
+            ) + sentiment_bonus
+
+            scores.append(min(100, max(0, sector_score)))
 
         return round(sum(scores) / len(scores), 2) if scores else 50.0
 
@@ -440,7 +536,7 @@ class DabanFeatureEngine:
         market_sentiment: Dict,
     ) -> Dict:
         """
-        综合分析个股打板机会
+        综合分析个股打板机会（增强版）
 
         Args:
             stock_data: 个股数据字典
@@ -458,27 +554,38 @@ class DabanFeatureEngine:
         low_price = stock_data.get("low", 0)
         circulating_cap = stock_data.get("circ_mv", 0)  # 流通市值（万元）
         seal_amount = stock_data.get("seal_amount", 0)  # 封单金额（万元）
+        turnover_amount = stock_data.get("amount", 0)  # 成交额（万元）
         concept_codes = stock_data.get("concept_codes", [])
         current_limit_count = stock_data.get("limit_count", 1)
+        sector_correlation = stock_data.get("sector_correlation", 0.0)
+        sector_momentum = stock_data.get("sector_momentum", 0.0)
+
+        # 获取市场阶段
+        market_phase = market_sentiment.get("phase", "normal")
 
         # 计算涨停价
         limit_up_price = self.get_limit_up_price(pre_close, ts_code)
 
-        # 1. 封单强度
+        # 1. 封单强度（增强版）
         seal_strength = self.calculate_seal_order_strength(
             current_price=close_price,
             limit_up_price=limit_up_price,
             seal_amount=seal_amount,
             circulating_cap=circulating_cap,
             limit_up_time=stock_data.get("limit_time"),
+            turnover_amount=turnover_amount,
+            market_phase=market_phase,
         )
 
-        # 2. 板块联动
+        # 2. 板块联动（增强版）
         sector_resonance = self.calculate_sector_resonance(
             ts_code=ts_code,
             concept_codes=concept_codes,
             concept_data=concept_data,
             limit_up_stocks_in_sector=stock_data.get("limit_up_in_sector", 0),
+            sector_correlation=sector_correlation,
+            market_sentiment_score=market_sentiment.get("score", 50.0),
+            sector_momentum=sector_momentum,
         )
 
         # 3. 涨停形态
@@ -519,6 +626,9 @@ class DabanFeatureEngine:
                 "pattern": pattern_result["pattern"],
                 "pattern_strength": pattern_result["strength"],
                 "consecutive_prob": round(consecutive_prob, 3),
+                "market_phase": market_phase,
+                "sector_correlation": sector_correlation,
+                "sector_momentum": sector_momentum,
             },
             "recommendation": self._get_recommendation(comprehensive_score),
             "pattern_description": pattern_result["description"],

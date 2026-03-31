@@ -26,8 +26,8 @@ strategies_config = {
         },
     },
     "enhanced_dragon_head": {
-        "enabled": False,  # 默认禁用，需要手动启用
-        "weight": 0.3,
+        "enabled": True,  # 已启用打板策略
+        "weight": 0.2,
         "params": {
             "strategy_type": "first_limit",  # first_limit, one_to_two, leader
             "limit_up_threshold": 0.095,
@@ -62,8 +62,8 @@ strategies_config = {
         },
     },
     "first_limit": {
-        "enabled": False,  # 默认禁用，需要手动启用
-        "weight": 0.25,
+        "enabled": True,  # 已启用打板策略
+        "weight": 0.15,
         "params": {
             "limit_up_threshold": 0.095,
             "limit_up_threshold_20": 0.195,
@@ -81,8 +81,8 @@ strategies_config = {
         },
     },
     "one_to_two": {
-        "enabled": False,  # 默认禁用，需要手动启用
-        "weight": 0.25,
+        "enabled": True,  # 已启用打板策略
+        "weight": 0.15,
         "params": {
             "limit_up_threshold": 0.095,
             "limit_up_threshold_20": 0.195,
@@ -107,9 +107,11 @@ multi_strategy_config = {
     "enabled": True,
     "combination_method": "weighted_score",  # weighted_score / voting
     "strategy_weights": {
-        "hot_rotation": 0.5,
-        "momentum": 0.3,
-        "enhanced_dragon_head": 0.2,  # 打板策略权重
+        "hot_rotation": 0.4,
+        "momentum": 0.25,
+        "enhanced_dragon_head": 0.2,
+        "first_limit": 0.1,
+        "one_to_two": 0.1,
     },
     "portfolio_params": {
         "top_n_stocks": 10,

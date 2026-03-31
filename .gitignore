@@ -36,10 +36,13 @@ logs/
 data/raw/*.csv
 data/processed/
 data/features/
-# data/models/
+data/cache/
 data/results/
 data/finetune*/
-data
+# Keep important data files
+!data/models/
+!data/patterns/
+!data/*.json
 
 # Jupyter
 .ipynb_checkpoints
