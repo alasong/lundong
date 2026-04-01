@@ -51,18 +51,18 @@ python src/main.py --mode full --top-n 10
 
 ## 当前数据库状态
 
-### 数据概览（截至 2026-03-16）
+### 数据概览（截至 2026-03-31）
 
 | 数据表 | 记录数 | 说明 |
 |--------|--------|------|
-| `concept_daily` | 569,095 | 板块日线行情（944 个板块） |
-| `stock_daily` | 560,205 | 个股日线行情（1,932 只股票） |
+| `concept_daily` | 572,897 | 板块日线行情（426 个板块） |
+| `stock_daily` | 6,618,387 | 个股日线行情 |
 | `concept_constituent` | 380 | 板块成分股关系 |
 | `stock_daily_basic` | 18,420 | 个股每日基本面（PE/PB/市值） |
 
 **行情数据日期范围**：
-- 板块数据：2020-01-02 ~ 2026-03-13（6 年 + 历史）
-- 个股数据：2023-03-13 ~ 2026-03-13
+- 板块数据：2020-01-02 ~ 2026-03-02（6 年 + 历史）
+- 个股数据：2023-03-13 ~ 2026-03-17
 
 **个股数据覆盖**：
 | 市场 | 数量 | 说明 |
@@ -250,6 +250,14 @@ src/
 │   ├── predictor.py           # XGBoost 预测（65 个特征）- 板块预测
 │   └── stock_predictor.py     # XGBoost 预测 - 个股预测
 │
+├── strategies/                 # 策略模块
+│   ├── base_strategy.py        # 策略基类
+│   ├── strategy_factory.py     # 策略工厂
+│   ├── position_manager.py     # 仓位管理
+│   ├── enhanced_risk_manager.py # 风险管理
+│   ├── event_driver.py         # 事件驱动
+│   └── ...                     # 更多策略
+│
 ├── portfolio/                 # 组合优化
 │   └── optimizer.py           # 组合优化器（风险平价 + Black-Litterman）
 │
@@ -415,6 +423,8 @@ export TUSHARE_TOKEN=your_token
 - `docs/PORTFOLIO_SUMMARY.md` - 组合构建总结
 - `docs/PORTFOLIO_IMPLEMENTATION.md` - 组合实现文档
 - `docs/PORTFOLIO_GUIDE.md` - 组合使用指南
+- `docs/ML模型分析报告-2026-03-30.md` - ML模型详细分析
+- `docs/项目Review报告-2026-03-31.md` - 项目架构与代码质量Review
 
 ---
 
