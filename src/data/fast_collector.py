@@ -201,12 +201,13 @@ class HighSpeedDataCollector:
         if len(df) < target_days:
             return True
 
-        # 检查最新日期是否是最近 3 天内的
+        # 检查最新日期是否是最近 3 天内的（放宽条件，允许更新到最新交易日）
         today = datetime.now()
         latest = datetime.strptime(str(latest_date), "%Y%m%d")
         days_diff = (today - latest).days
 
-        return days_diff > 3
+        # 如果数据超过1天未更新，允许重新下载以获取最新数据
+        return days_diff >= 1
 
     def _check_code_valid(self, ts_code: str) -> bool:
         """

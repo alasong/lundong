@@ -298,6 +298,17 @@ def main():
 
                 print("\n" + "=" * 70)
                 print("A 股热点轮动预测结果")
+
+                # 获取并显示最新数据日期
+                try:
+                    from data.database import get_database
+                    db = get_database()
+                    latest_concept = db.get_latest_date(table='concept_daily')
+                    latest_stock = db.get_latest_date(table='stock_daily')
+                    print(f"数据截止: 板块 {latest_concept or 'N/A'} | 个股 {latest_stock or 'N/A'}")
+                except Exception as e:
+                    logger.warning(f"获取数据日期失败: {e}")
+
                 print("=" * 70)
 
                 if top_predictions:
@@ -305,9 +316,10 @@ def main():
                     has_confidence = any("confidence" in p for p in top_predictions)
 
                     print("\n【预测 TOP10】")
-                    print("-" * 95)
-                    print(f"{'排名':<4} {'板块代码':<12} {'板块名称':<12} {'综合得分':>8} {'1日预测':>8} {'5日预测':>8} {'20日预测':>9}")
-                    print("-" * 95)
+                    # 使用 Unicode 制表符美化边框
+                    print("┌────┬────────────┬────────────┬──────────┬──────────┬──────────┬───────────┐")
+                    print("│排名│  板块代码  │  板块名称  │ 综合得分 │  1日预测 │  5日预测 │  20日预测 │")
+                    print("├────┼────────────┼────────────┼──────────┼──────────┼──────────┼───────────┤")
 
                     for i, pred in enumerate(top_predictions, 1):
                         # 获取板块名称
@@ -326,13 +338,18 @@ def main():
                         p5d = pred.get("pred_5d_pct", pred.get("pred_5d", 0))
                         p20d = pred.get("pred_20d_pct", pred.get("pred_20d", 0))
 
-                        # 截断板块名称
-                        display_name = block_name[:10] if len(block_name) > 10 else block_name
+                        # 截断板块名称，考虑中文宽度
+                        display_name = block_name[:8] if len(block_name) > 8 else block_name
                         display_code = code.split('.')[0] if '.' in code else code
 
-                        print(f"{i:<4} {display_code:<12} {display_name:<12} {combined:>8.2f} {p1d:>+7.2f}% {p5d:>+7.2f}% {p20d:>+8.2f}%")
+                        # 中文对齐：计算实际显示宽度
+                        name_width = len(display_name)
+                        # 中文字符占2个显示宽度，需补空格
+                        name_pad = " " * (10 - name_width) if name_width < 10 else ""
 
-                    print("-" * 95)
+                        print(f"│ {i:<2} │ {display_code:<10} │{display_name}{name_pad}│  {combined:>6.2f} │ {p1d:>+6.2f}% │ {p5d:>+6.2f}% │  {p20d:>+7.2f}% │")
+
+                    print("└────┴────────────┴────────────┴──────────┴──────────┴──────────┴───────────┘")
 
                     # 置信度统计
                     if has_confidence:

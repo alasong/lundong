@@ -745,24 +745,25 @@ class SQLiteDatabase:
         results = self.query(sql, (ts_code, trade_date))
         return len(results) > 0
 
-    def get_latest_date(self, ts_code: str = None) -> Optional[str]:
+    def get_latest_date(self, ts_code: str = None, table: str = 'concept_daily') -> Optional[str]:
         """
         获取最新交易日期
 
         Args:
             ts_code: 板块代码，如果为 None 则返回所有板块的最新日期
+            table: 表名，默认 concept_daily，可选 stock_daily
 
         Returns:
             最新日期字符串 (YYYYMMDD)
         """
         if ts_code:
-            sql = """
-                SELECT MAX(trade_date) FROM concept_daily
+            sql = f"""
+                SELECT MAX(trade_date) FROM {table}
                 WHERE ts_code = ?
             """
             results = self.query(sql, (ts_code,))
         else:
-            sql = "SELECT MAX(trade_date) FROM concept_daily"
+            sql = f"SELECT MAX(trade_date) FROM {table}"
             results = self.query(sql)
 
         if results and results[0][0]:
