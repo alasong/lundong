@@ -1,0 +1,131 @@
+{
+  "updatedAt": "2026-03-31T08:02:28.303Z",
+  "missions": [
+    {
+      "id": "session:4eab5950-f458-4756-95dc-84897b079a7c:none",
+      "source": "session",
+      "name": "none",
+      "objective": "Session mission",
+      "createdAt": "2026-03-31T08:01:46.219Z",
+      "updatedAt": "2026-03-31T08:02:28.303Z",
+      "status": "running",
+      "workerCount": 8,
+      "taskCounts": {
+        "total": 8,
+        "pending": 0,
+        "blocked": 0,
+        "inProgress": 8,
+        "completed": 0,
+        "failed": 0
+      },
+      "agents": [
+        {
+          "name": "architect:a6e64c5",
+          "role": "architect",
+          "ownership": "a6e64c53d43a89b82",
+          "status": "running",
+          "currentStep": null,
+          "latestUpdate": null,
+          "completedSummary": null,
+          "updatedAt": "2026-03-31T08:01:46.219Z"
+        },
+        {
+          "name": "code-reviewer:a128fe0",
+          "role": "code-reviewer",
+          "ownership": "a128fe0bd17a37eef",
+          "status": "running",
+          "currentStep": null,
+          "latestUpdate": null,
+          "completedSummary": null,
+          "updatedAt": "2026-03-31T08:01:46.235Z"
+        },
+        {
+          "name": "code-reviewer:ac1753a",
+          "role": "code-reviewer",
+          "ownership": "ac1753a83d6ba3e29",
+          "status": "running",
+          "currentStep": null,
+          "latestUpdate": null,
+          "completedSummary": null,
+          "updatedAt": "2026-03-31T08:01:46.253Z"
+        },
+        {
+          "name": "explore:af6f2e3",
+          "role": "explore",
+          "ownership": "af6f2e3dd1495149b",
+          "status": "running",
+          "currentStep": null,
+          "latestUpdate": null,
+          "completedSummary": null,
+          "updatedAt": "2026-03-31T08:01:46.286Z"
+        },
+        {
+          "name": "architect:aa8bee1",
+          "role": "architect",
+          "ownership": "aa8bee144c27a1a25",
+          "status": "running",
+          "currentStep": null,
+          "latestUpdate": null,
+          "completedSummary": null,
+          "updatedAt": "2026-03-31T08:02:28.168Z"
+        },
+        {
+          "name": "code-reviewer:a0792d3",
+          "role": "code-reviewer",
+          "ownership": "a0792d3961114218c",
+          "status": "running",
+          "currentStep": null,
+          "latestUpdate": null,
+          "completedSummary": null,
+          "updatedAt": "2026-03-31T08:02:28.251Z"
+        },
+        {
+          "name": "code-reviewer:a490a9f",
+          "role": "code-reviewer",
+          "ownership": "a490a9f689bad06ab",
+          "status": "running",
+          "currentStep": null,
+          "latestUpdate": null,
+          "completedSummary": null,
+          "updatedAt": "2026-03-31T08:02:28.290Z"
+        },
+        {
+          "name": "explore:adfcde8",
+          "role": "explore",
+          "ownership": "adfcde89d99642393",
+          "status": "running",
+          "currentStep": null,
+          "latestUpdate": null,
+          "completedSummary": null,
+          "updatedAt": "2026-03-31T08:02:28.303Z"
+        }
+      ],
+      "timeline": [
+        {
+          "id": "session-start:a0792d3961114218c:2026-03-31T08:02:28.251Z",
+          "at": "2026-03-31T08:02:28.251Z",
+          "kind": "update",
+          "agent": "code-reviewer:a0792d3",
+          "detail": "started code-reviewer:a0792d3",
+          "sourceKey": "session-start:a0792d3961114218c"
+        },
+        {
+          "id": "session-start:a490a9f689bad06ab:2026-03-31T08:02:28.290Z",
+          "at": "2026-03-31T08:02:28.290Z",
+          "kind": "update",
+          "agent": "code-reviewer:a490a9f",
+          "detail": "started code-reviewer:a490a9f",
+          "sourceKey": "session-start:a490a9f689bad06ab"
+        },
+        {
+          "id": "session-start:adfcde89d99642393:2026-03-31T08:02:28.303Z",
+          "at": "2026-03-31T08:02:28.303Z",
+          "kind": "update",
+          "agent": "explore:adfcde8",
+          "detail": "started explore:adfcde8",
+          "sourceKey": "session-start:adfcde89d99642393"
+        }
+      ]
+    }
+  ]
+}

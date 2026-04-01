@@ -1,0 +1,306 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1774882957959,
+  "projectRoot": "/home/song/lundong",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "requirements.txt"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "pip",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": "snake_case",
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "scripts",
+      "src",
+      "tests"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "__pycache__": {
+      "path": "__pycache__",
+      "purpose": null,
+      "fileCount": 6,
+      "lastAccessed": 1774882957950,
+      "keyFiles": [
+        "DABAN_STRATEGY_GUIDE.cpython-312.pyc",
+        "DATA_UPDATE_GUIDE.cpython-312.pyc",
+        "monitoring_dashboard.cpython-312.pyc",
+        "small_capital_test.cpython-312.pyc",
+        "test_strategy_versioning.cpython-312-pytest-9.0.2.pyc"
+      ]
+    },
+    "configs": {
+      "path": "configs",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1774882957953,
+      "keyFiles": []
+    },
+    "data": {
+      "path": "data",
+      "purpose": "Data files",
+      "fileCount": 2,
+      "lastAccessed": 1774882957954,
+      "keyFiles": [
+        "stock.db",
+        "stock.db.bak"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 11,
+      "lastAccessed": 1774882957954,
+      "keyFiles": [
+        "BACKUP.md",
+        "DABAN_STRATEGY_MANUAL.md",
+        "EXECUTION.md",
+        "GAP_ANALYSIS.md",
+        "LOGGING.md"
+      ]
+    },
+    "logs": {
+      "path": "logs",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1774882957955,
+      "keyFiles": []
+    },
+    "notebooks": {
+      "path": "notebooks",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1774882957956,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 6,
+      "lastAccessed": 1774882957956,
+      "keyFiles": [
+        "backtest_daban_strategies.py",
+        "backtest_strategies.py",
+        "install-hooks.sh",
+        "optimize_daban_strategies.py",
+        "optimize_params.py"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 6,
+      "lastAccessed": 1774882957956,
+      "keyFiles": [
+        "__init__.py",
+        "config.py",
+        "import_constituents.py",
+        "main.py",
+        "runner.py"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 13,
+      "lastAccessed": 1774882957957,
+      "keyFiles": [
+        "__init__.py",
+        "conftest.py",
+        "stress_test_predictor.py",
+        "test_analysis.py",
+        "test_data_collection.py"
+      ]
+    },
+    "data/models": {
+      "path": "data/models",
+      "purpose": "Data models",
+      "fileCount": 7,
+      "lastAccessed": 1774882957958,
+      "keyFiles": [
+        "feature_importance.json",
+        "model_versions.json",
+        "stock_model.pkl"
+      ]
+    },
+    "src/data": {
+      "path": "src/data",
+      "purpose": "Data files",
+      "fileCount": 25,
+      "lastAccessed": 1774882957959,
+      "keyFiles": [
+        "AGENTS.md",
+        "__init__.py",
+        "analyst_collector.py"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/main.py",
+      "accessCount": 9,
+      "lastAccessed": 1775004519857,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 4,
+      "lastAccessed": 1775003323214,
+      "type": "file"
+    },
+    {
+      "path": "src",
+      "accessCount": 3,
+      "lastAccessed": 1774944987645,
+      "type": "directory"
+    },
+    {
+      "path": "src/models/predictor.py",
+      "accessCount": 2,
+      "lastAccessed": 1774883052601,
+      "type": "file"
+    },
+    {
+      "path": "src/portfolio/optimizer.py",
+      "accessCount": 2,
+      "lastAccessed": 1774945271335,
+      "type": "file"
+    },
+    {
+      "path": "src/strategies/position_manager.py",
+      "accessCount": 2,
+      "lastAccessed": 1774945308590,
+      "type": "file"
+    },
+    {
+      "path": "src/strategies/enhanced_risk_manager.py",
+      "accessCount": 2,
+      "lastAccessed": 1774945309168,
+      "type": "file"
+    },
+    {
+      "path": "src/strategies/event_driver.py",
+      "accessCount": 2,
+      "lastAccessed": 1774945310125,
+      "type": "file"
+    },
+    {
+      "path": "src/models/stock_predictor.py",
+      "accessCount": 1,
+      "lastAccessed": 1774883039552,
+      "type": "file"
+    },
+    {
+      "path": "src/models/online_learning.py",
+      "accessCount": 1,
+      "lastAccessed": 1774883039608,
+      "type": "file"
+    },
+    {
+      "path": "src/models/deep_learning.py",
+      "accessCount": 1,
+      "lastAccessed": 1774883039944,
+      "type": "file"
+    },
+    {
+      "path": "src/models/model_optimizer.py",
+      "accessCount": 1,
+      "lastAccessed": 1774883044712,
+      "type": "file"
+    },
+    {
+      "path": "src/models/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1774883052551,
+      "type": "file"
+    },
+    {
+      "path": "docs/ML模型分析报告-2026-03-30.md",
+      "accessCount": 1,
+      "lastAccessed": 1774883687000,
+      "type": "file"
+    },
+    {
+      "path": "scripts/workflow.py",
+      "accessCount": 1,
+      "lastAccessed": 1774926587700,
+      "type": "file"
+    },
+    {
+      "path": "scripts/optimize_params.py",
+      "accessCount": 1,
+      "lastAccessed": 1774926587838,
+      "type": "file"
+    },
+    {
+      "path": "src/agents/predict_agent.py",
+      "accessCount": 1,
+      "lastAccessed": 1774926588872,
+      "type": "file"
+    },
+    {
+      "path": "src/data/name_mapper.py",
+      "accessCount": 1,
+      "lastAccessed": 1774943640131,
+      "type": "file"
+    },
+    {
+      "path": "ARCHITECTURE.md",
+      "accessCount": 1,
+      "lastAccessed": 1774944159959,
+      "type": "file"
+    },
+    {
+      "path": "docs/项目Review报告-2026-03-31.md",
+      "accessCount": 1,
+      "lastAccessed": 1774944749200,
+      "type": "file"
+    },
+    {
+      "path": "src/strategy/position_manager.py",
+      "accessCount": 1,
+      "lastAccessed": 1774945122757,
+      "type": "file"
+    },
+    {
+      "path": "src/strategy/event_driver.py",
+      "accessCount": 1,
+      "lastAccessed": 1774945122821,
+      "type": "file"
+    },
+    {
+      "path": "src/strategy/enhanced_risk_manager.py",
+      "accessCount": 1,
+      "lastAccessed": 1774945122842,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

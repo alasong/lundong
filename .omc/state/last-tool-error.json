@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"python -c \\\"\\nimport sys\\nsys.path.insert(0, '.')\\nfrom data.database import get_database\\ndb = get_database()\\n# 检查各表数据量\\ntables = ['concept_daily', 'stock_daily', 'ths_daily']\\nfor t in ...",
+  "error": "Exit code 1\nTraceback (most recent call last):\n  File \"<string>\", line 4, in <module>\nModuleNotFoundError: No module named 'data.database'",
+  "timestamp": "2026-03-31T03:14:54.194Z",
+  "retry_count": 2
+}
