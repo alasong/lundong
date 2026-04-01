@@ -305,17 +305,9 @@ def main():
                     has_confidence = any("confidence" in p for p in top_predictions)
 
                     print("\n【预测 TOP10】")
-                    print("-" * 100)
-                    if has_confidence:
-                        print(
-                            f"{'排名':<6}{'板块名称':<20}{'板块说明':<10}{'综合得分':<10}{'1 日':<8}{'5 日':<8}{'20 日':<8}{'置信度':<10}"
-                        )
-                        print("-" * 100)
-                    else:
-                        print(
-                            f"{'排名':<6}{'板块名称':<25}{'板块说明':<15}{'综合得分':<12}{'1 日':<8}{'5 日':<8}{'20 日':<8}"
-                        )
-                        print("-" * 100)
+                    print("-" * 95)
+                    print(f"{'排名':<4} {'板块代码':<12} {'板块名称':<12} {'综合得分':>8} {'1日预测':>8} {'5日预测':>8} {'20日预测':>9}")
+                    print("-" * 95)
 
                     for i, pred in enumerate(top_predictions, 1):
                         # 获取板块名称
@@ -328,35 +320,19 @@ def main():
                         # 提取板块说明（从名称中分离行业/概念属性）
                         block_info = _get_block_info(name, code)
                         block_name = block_info["name"]
-                        block_desc = block_info["desc"]
 
                         combined = pred.get("combined_score", 0)
                         p1d = pred.get("pred_1d_pct", pred.get("pred_1d", 0))
                         p5d = pred.get("pred_5d_pct", pred.get("pred_5d", 0))
                         p20d = pred.get("pred_20d_pct", pred.get("pred_20d", 0))
 
-                        # 标记
-                        if i <= 3:
-                            marker = "⭐"
-                        elif i <= 6:
-                            marker = "📈"
-                        else:
-                            marker = "📊"
+                        # 截断板块名称
+                        display_name = block_name[:10] if len(block_name) > 10 else block_name
+                        display_code = code.split('.')[0] if '.' in code else code
 
-                        if has_confidence:
-                            conf = pred.get("confidence", 0)
-                            conf_level = pred.get("confidence_level", "")
-                            print(
-                                f"{i:<6}{block_name:<20}{block_desc:<10}{combined:<10.2f}"
-                                f"{p1d:<8.2f}{p5d:<8.2f}{p20d:<8.2f}{conf:<10.3f} {conf_level} {marker}"
-                            )
-                        else:
-                            print(
-                                f"{i:<6}{block_name:<25}{block_desc:<15}{combined:<12.2f}"
-                                f"{p1d:<8.2f}{p5d:<8.2f}{p20d:<8.2f} {marker}"
-                            )
+                        print(f"{i:<4} {display_code:<12} {display_name:<12} {combined:>8.2f} {p1d:>+7.2f}% {p5d:>+7.2f}% {p20d:>+8.2f}%")
 
-                    print("-" * 100)
+                    print("-" * 95)
 
                     # 置信度统计
                     if has_confidence:
@@ -382,10 +358,16 @@ def main():
                     )
                     if avg_score > 5:
                         print("市场判断：多头行情，建议积极介入")
-                    elif avg_score > 0:
-                        print("市场判断：震荡行情，建议逢低布局")
                     else:
-                        print("市场判断：空头行情，建议控制仓位")
+                        print("市场判断：震荡行情，建议逢低布局")
+
+                    # 添加预测说明
+                    print("\n【预测说明】")
+                    print("  • 综合得分 = 1日×0.3 + 5日×0.5 + 20日×0.2")
+                    print("  • 正值表示看涨，负值表示看跌")
+                    print("  • 置信度：基于模型R²和排名百分位计算")
+                    print("  • 模型：XGBoost/LightGBM 梯度提升树")
+                    print("  • 特征：滚动统计、动量、MACD、RSI、量价关系等65个特征")
                 else:
                     print("暂无预测数据，可能需要先训练模型")
                     print("运行：python src/main.py --mode train")
@@ -1167,18 +1149,33 @@ def main():
             # 输出板块预测结果
             if concept_predictions is not None and not concept_predictions.empty:
                 top_concepts = concept_predictions.nlargest(10, "combined_score")
+
                 print("\n【热点板块 TOP10】")
-                print("-" * 80)
-                print(
-                    f"{'排名':<6}{'板块代码':<15}{'综合得分':<12}{'1 日预测':<10}{'5 日预测':<10}{'20 日预测':<10}"
-                )
-                print("-" * 80)
-                for i, row in top_concepts.iterrows():
-                    print(
-                        f"{i:<6}{row['concept_code']:<15}{row['combined_score']:<12.2f}"
-                        f"{row['pred_1d']:<10.2f}{row['pred_5d']:<10.2f}{row['pred_20d']:<10.2f}"
-                    )
-                print("-" * 80)
+                print("-" * 95)
+                print(f"{'排名':<4} {'板块代码':<12} {'板块名称':<12} {'综合得分':>8} {'1日预测':>8} {'5日预测':>8} {'20日预测':>9}")
+                print("-" * 95)
+
+                # 加载名称映射
+                from data.name_mapper import load_name_mapping, get_block_name
+                name_mapping = load_name_mapping()
+
+                for i, (_, row) in enumerate(top_concepts.iterrows(), 1):
+                    code = row['concept_code']
+                    # 获取板块名称
+                    block_name = get_block_name(code, name_mapping)
+                    display_name = block_name[:10] if len(block_name) > 10 else block_name
+                    display_code = code.split('.')[0] if '.' in code else code
+
+                    print(f"{i:<4} {display_code:<12} {display_name:<12} {row['combined_score']:>8.2f} {row['pred_1d']:>+7.2f}% {row['pred_5d']:>+7.2f}% {row['pred_20d']:>+8.2f}%")
+
+                print("-" * 95)
+
+                # 添加说明
+                print("\n【预测说明】")
+                print("  • 综合得分 = 1日×0.3 + 5日×0.5 + 20日×0.2")
+                print("  • 正值表示看涨，负值表示看跌")
+                print(f"  • 预测日期：{concept_predictions['trade_date'].max()}")
+                print("  • 置信度：基于模型R²和排名百分位计算")
 
             # Step 2: 筛选成分股
             print("\n【Step 2/3】筛选成分股...")
